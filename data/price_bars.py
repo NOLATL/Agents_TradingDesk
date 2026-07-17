@@ -26,11 +26,17 @@ def _latest_docs_by_symbol(conn) -> dict[str, Document]:
     return latest
 
 
-def rebuild_price_bars(conn) -> int:
-    """Idempotent full rebuild: delete + reinsert from the winning documents."""
+def rebuild_price_bars(conn, winners: dict[str, Document] | None = None) -> int:
+    """Idempotent full rebuild: delete + reinsert from the winning documents.
+
+    `winners` overrides the default latest-ingested-wins choice per symbol —
+    used by Stage 3's restatement guard to keep a prior document pinned while
+    a REVISION incident awaits the human. Unlisted symbols use the default."""
     conn.execute("DELETE FROM price_bars")
     n = 0
     latest = _latest_docs_by_symbol(conn)
+    if winners:
+        latest = {**latest, **winners}
     for symbol in sorted(latest):
         doc = latest[symbol]
         for bar in parse_bars(doc, symbol):
