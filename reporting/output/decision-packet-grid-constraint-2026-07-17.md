@@ -1,83 +1,82 @@
 # Decision Packet — grid-constraint: ETN, GEV, HUBB, PWR, NVT
 
-*Generated 2026-07-17T13:26:40.143434+00:00 · thesis v2 (REJECTED) · experiment 9 · strategy_tag `grid-constraint`*
+*Generated 2026-07-17T13:51:10.816279+00:00 · thesis v2 (REJECTED) · experiment 9 · strategy_tag `grid-constraint`*
 
 > **No orders are proposed in Stage 1.** This packet is the evidence-to-thesis
 > vertical slice output; sizing and orders arrive with the Stage 2 simulator.
 
 ## Executive summary (LLM-written, JUDGMENT — adds no claims)
 
-The thesis linking AI-driven data center expansion to grid modernization demand was rejected. The basket identified companies with high exposure scores, but the review highlighted insufficient evidence of pure data center focus, unverified forecasts ignoring seasonality, and unquantified data center-specific backlog. GEV's backlog includes non-data-center projects, and PWR's forecast lacks data center-specific validation. The verdict concluded evidence was insufficient for action.
+The thesis linking AI/data center growth to grid infrastructure demand was rejected. Review identified that company backlogs (GEV, PWR, NVT, ETN) include utility/industrial projects, not specifically data centers, with no confirmed data center demand linkage. Price momentum preceded the narrative, indicating reverse-engineering of the thesis. Forecast probabilities for backlog growth (GEV >$100B, PWR >$50B by 2026) were noted but did not validate the thesis.
 
 ## Causal chain
 
-Data center expansion (AI-driven) increases electricity demand, straining grid infrastructure and creating demand for grid modernization solutions, which is captured by companies with high exposure to data center power and grid infrastructure segments.
+AI/data center growth drives grid infrastructure demand, evidenced by high backlog growth in companies with direct exposure to data center power systems (GEV, PWR, NVT, ETN).
 
 ## Exposure basket (ranked by measured exposure only — invariant 5)
 
 | Rank | Symbol | Justification | Supporting assertions |
 |---|---|---|---|
-| 1 | GEV | GEV has the highest exposure_score (26.55) supported by high revenue_share (77.66%) and backlog_ratio (7.87) in electrification (A18, A19), strong electrification segment revenue ($2,959M) and backlog ($42,440M) (A10, A11), and robust EBITDA (A14, A15). | A9, A10, A11, A14, A15, A18, A19 |
-| 2 | PWR | PWR has exposure_score (1.0) supported by high backlog ($48.47B) (A38), data center demand drivers (A29, A30, A36, A37), and infrastructure solutions for data centers (A28, A31). | A28, A29, A30, A31, A36, A37, A38 |
-| 3 | NVT | NVT has exposure_score (0.75) supported by data center solutions (A44, A45, A47, A48) and segment revenue mix (72% Systems Protection for data centers) (A46). | A44, A45, A46, A47, A48 |
-| 4 | ETN | ETN has exposure_score (0.34) supported by data center power enclosures (A4). | A4 |
-| 5 | HUBB | HUBB has insufficient evidence for grid-constraint theme; exposure_score (0.15) is low and source facts (A21, A22, A23, A24) are general utility solutions without explicit data center grid constraint linkage. | A21, A22, A23, A24 |
+| 1 | GEV | Highest exposure_score (1.0) and emphasis_total (304), with Power segment backlog $99.69B (A82) and Electrification segment backlog $42.44B (A81). | A85, A86, A81, A82 |
+| 2 | PWR | Highest exposure_score (1.0) among remaining companies, emphasis_total (130), backlog $48.47B (A104) and 10.2% backlog growth (A106). | A108, A109, A104, A106 |
+| 3 | NVT | High exposure_score (0.838), backlog_ratio 1.85 (A121), and data center focus (A118, A119). | A120, A121, A122 |
+| 4 | ETN | Moderate exposure_score (0.34), Electrical Americas backlog $14.459B (A71) and revenue $3.6B (A70). | A73, A74, A71 |
+| 5 | HUBB | Insufficient backlog metrics for validation (only contract liabilities $167.9M, A93). | A94, A95 |
 
 ### Measured exposure metrics
 
 | Assertion | Symbol | Metric | Value | Function (version) |
 |---|---|---|---|---|
-| A5 | ETN | emphasis_total | 34 | `analytics.exposure.emphasis_count` (9d9e797) |
-| A6 | ETN | exposure_score | 0.34 | `analytics.exposure.exposure_score` (9d9e797) |
-| A17 | GEV | emphasis_total | 304 | `analytics.exposure.emphasis_count` (9d9e797) |
-| A18 | GEV | revenue_share | 77.66404199475065616797900262 | `analytics.exposure.revenue_share` (9d9e797) |
-| A19 | GEV | backlog_ratio | 7.874015748031496062992125984 | `analytics.exposure.backlog_ratio` (9d9e797) |
-| A20 | GEV | exposure_score | 26.55468066491688538932633421 | `analytics.exposure.exposure_score` (9d9e797) |
-| A26 | HUBB | emphasis_total | 15 | `analytics.exposure.emphasis_count` (9d9e797) |
-| A27 | HUBB | exposure_score | 0.15 | `analytics.exposure.exposure_score` (9d9e797) |
-| A41 | PWR | emphasis_total | 130 | `analytics.exposure.emphasis_count` (9d9e797) |
-| A42 | PWR | exposure_score | 1 | `analytics.exposure.exposure_score` (9d9e797) |
-| A49 | NVT | emphasis_total | 75 | `analytics.exposure.emphasis_count` (9d9e797) |
-| A50 | NVT | exposure_score | 0.75 | `analytics.exposure.exposure_score` (9d9e797) |
+| A73 | ETN | emphasis_total | 34 | `analytics.exposure.emphasis_count` (9a7649c) |
+| A74 | ETN | exposure_score | 0.34 | `analytics.exposure.exposure_score` (9a7649c) |
+| A85 | GEV | emphasis_total | 304 | `analytics.exposure.emphasis_count` (9a7649c) |
+| A86 | GEV | exposure_score | 1 | `analytics.exposure.exposure_score` (9a7649c) |
+| A94 | HUBB | emphasis_total | 15 | `analytics.exposure.emphasis_count` (9a7649c) |
+| A95 | HUBB | exposure_score | 0.15 | `analytics.exposure.exposure_score` (9a7649c) |
+| A108 | PWR | emphasis_total | 130 | `analytics.exposure.emphasis_count` (9a7649c) |
+| A109 | PWR | exposure_score | 1 | `analytics.exposure.exposure_score` (9a7649c) |
+| A120 | NVT | emphasis_total | 75 | `analytics.exposure.emphasis_count` (9a7649c) |
+| A121 | NVT | backlog_ratio | 1.851851851851851851851851852 | `analytics.exposure.backlog_ratio` (9a7649c) |
+| A122 | NVT | exposure_score | 0.837962962962962962962962963 | `analytics.exposure.exposure_score` (9a7649c) |
 
 ## Valuation check
 
-Insufficient data to assess valuation (no earnings, P/E, or price metrics provided).
+Insufficient fundamentals data (e.g., no revenue, EBITDA, or P/E ratios) to compute valuation metrics.
 
 ## Forecasts (the measurement instrument)
 
 | # | Statement | P | Horizon | Resolution criterion |
 |---|---|---|---|---|
-| 1 | GEV's electrification segment revenue for fiscal year 2026 will exceed $12.0 billion. | 0.85 | 2026-12-31 | GEV's 10-K for fiscal year 2026 (SEC filing) reporting electrification segment revenue > $12.0 billion. |
-| 2 | PWR's total backlog as of December 31, 2026 will exceed $55.0 billion. | 0.60 | 2026-12-31 | PWR's 10-Q for Q4 2026 (SEC filing) reporting total backlog > $55.0 billion. |
-| 3 | NVT's backlog as of December 31, 2026 will exceed $3.0 billion. | 0.80 | 2026-12-31 | NVT's 10-Q for Q4 2026 (SEC filing) reporting backlog > $3.0 billion. |
-| 4 | PWR's data center-related revenue (from Quanta segment) will represent at least 40% of total revenue in fiscal year 2026. | 0.70 | 2026-12-31 | PWR's 10-K for fiscal year 2026 reporting data center-related revenue as a percentage of total revenue >= 40%. |
-| 5 | NVT's Systems Protection segment revenue (for data centers) will exceed $1.0 billion in fiscal year 2026. | 0.75 | 2026-12-31 | NVT's 10-K for fiscal year 2026 reporting Systems Protection segment revenue > $1.0 billion. |
-| 6 | HUBB's Utility Solutions segment backlog will exceed $1.0 billion as of December 31, 2026. | 0.40 | 2026-12-31 | HUBB's 10-Q for Q4 2026 (SEC filing) reporting Utility Solutions segment backlog > $1.0 billion. |
+| 1 | GEV Power segment backlog exceeds $100 billion by 2026-12-31. | 0.70 | 2026-12-31 | GEV Q4 2026 earnings report backlog_power ≥ $100,000 million (A82). |
+| 2 | PWR backlog exceeds $50 billion by 2026-12-31. | 0.60 | 2026-12-31 | PWR Q4 2026 earnings report backlog_total ≥ $50,000 million (A104). |
+| 3 | NVT backlog_ratio exceeds 2.0 by 2027-03-31. | 0.50 | 2027-03-31 | NVT Q1 2027 earnings report backlog_ratio ≥ 2.0 (A121). |
+| 4 | ETN Electrical Americas backlog ratio remains ≥ 4.0 as of 2026-12-31. | 0.90 | 2026-12-31 | ETN Q4 2026 earnings report backlog_total / segment_revenue_electrical ≥ 4.0 (A71, A70). |
+| 5 | PWR operating cash flow for 2026 exceeds $1.5 billion. | 0.80 | 2026-12-31 | PWR 2026 annual cash flow statement (A105). |
+| 6 | GEV Electrification segment revenue growth exceeds 15% YoY by 2026-12-31. | 0.60 | 2026-12-31 | GEV Q4 2026 earnings report segment_revenue_electrical ≥ 1.15 × prior year (A79). |
 
 ## Exit criteria (all four types, defined at creation)
 
-- **PRICE_STOP**: Stock price falls below 80% of current price (2026-07-17) by 2027-01-01
-- **CAUSAL_BREAK**: Data center demand growth rate (Gartner) falls below 5% YoY for two consecutive quarters by 2027-01-01
-- **VALUATION_EXIT**: Insufficient data: no earnings or P/E provided in evidence
-- **TIME_STOP**: 2027-01-01
+- **PRICE_STOP**: stock price falls below 80% of current market price
+- **CAUSAL_BREAK**: FRED IPUTIL index falls below 105.0 for three consecutive months
+- **VALUATION_EXIT**: insufficient fundamentals data to determine valuation threshold
+- **TIME_STOP**: 2027-06-30
 
 ## Independent review
 
 **Verdict: REJECT**
 
 ### Challenges
-- GEV's electrification segment backlog ($42.44B) is not exclusively data center-focused; evidence (A9) states 'demand for equipment to electrify data centers' but does not isolate data center-specific backlog, overestimating exposure purity (e.g., backlog likely includes commercial/industrial projects).
-- GEV's 2026 revenue forecast ($12B) assumes linear Q1-to-full-year growth from $2.959B (A10), ignoring typical infrastructure seasonality (Q1 often weak due to weather), with no historical data provided to validate this assumption.
-- PWR's backlog forecast ($55B) relies on total backlog growth ($48.47B as of Mar 2026, A38), but data center-specific backlog (A30, A31) is unquantified in evidence, making the forecast unverifiable against the thesis's causal chain.
+- Disconfirming evidence: GEV Power segment backlog ($99.69B, A82) includes utility/industrial projects (A80), not specifically data centers; no evidence links backlog to data centers (A78 is generic).
+- Exposure mapping: GEV exposure_score=1.0 based on Power segment backlog (A82), but segment serves utility/industrial markets (A80), not exclusively data centers; backlog metrics lack data center-specific isolation.
+- Price-narrative check: GEV (momentum_12_1=0.783) and PWR (0.774) have high momentum, indicating price action preceded narrative; thesis reverse-engineered from prior price movement.
 
 ### Is price driving the narrative? (reviewer-only quarantined metrics)
 
-No price-derived metrics available; thesis not reverse-engineered from price action
+GEV and PWR momentum_12_1 (0.783, 0.774) indicate price action preceded narrative; thesis reverse-engineered from prior price movement.
 
 ### Do-nothing case
 
-Evidence fails to confirm exposure purity (e.g., GEV's electrification segment includes non-data-center infrastructure), forecasts lack seasonality validation, and valuation is unassessable. 'Evidence insufficient' is the strongest case for inaction.
+Exposure not validated as data center-specific; GEV Power segment backlog includes non-data center utility projects (A80, A82), making causal link unconfirmed. Backlog growth alone insufficient without explicit data center demand linkage.
 
 ## Provenance appendix
 
@@ -86,53 +85,88 @@ COMPUTED → named function + code version; JUDGMENT → labeled model opinion.
 
 | Assertion | Type | Resolution |
 |---|---|---|
-| A4 | SOURCE_FACT | doc 13: “pre-integrated modular power enclosures for data center, industrial, utility and communications customers” |
-| A5 | COMPUTED | `analytics.exposure.emphasis_count` @ 9d9e797 |
-| A6 | COMPUTED | `analytics.exposure.exposure_score` @ 9d9e797 |
-| A7 | SOURCE_FACT | doc 23: “total revenues were $38.1 billion” |
-| A8 | SOURCE_FACT | doc 23: “Equipment revenues $ 20,934” |
-| A9 | SOURCE_FACT | doc 23: “to electrify industries including data centers playing a key role in the development of artificial intelligence (AI)” |
-| A10 | SOURCE_FACT | doc 20: “$ 2,959 $ 1,840” |
-| A11 | SOURCE_FACT | doc 20: “$ 42,440 $ 34,242 $ 25,034” |
-| A12 | SOURCE_FACT | doc 20: “$5.1 billion ( 5% )” |
-| A13 | SOURCE_FACT | doc 20: “$0.3 billion ( 1% )” |
-| A14 | SOURCE_FACT | doc 20: “$ 528 $ 205” |
-| A15 | SOURCE_FACT | doc 20: “$ 811 $ 517” |
-| A16 | SOURCE_FACT | doc 20: “$ (382) $ (146)” |
-| A17 | COMPUTED | `analytics.exposure.emphasis_count` @ 9d9e797 |
-| A18 | COMPUTED | `analytics.exposure.revenue_share` @ 9d9e797 |
-| A19 | COMPUTED | `analytics.exposure.backlog_ratio` @ 9d9e797 |
-| A20 | COMPUTED | `analytics.exposure.exposure_score` @ 9d9e797 |
-| A21 | SOURCE_FACT | doc 31: “Utility Solutions $ 948.9 $ 857.1” |
-| A22 | SOURCE_FACT | doc 31: “Electrical Solutions 567.8 508.1” |
-| A23 | SOURCE_FACT | doc 31: “Operating Income: Utility Solutions $ 175.1 $ 150.8” |
-| A24 | SOURCE_FACT | doc 31: “18.5 %” |
-| A25 | SOURCE_FACT | doc 31: “backlog intangible assets are classified in Level 3 of the fair value hierarchy” |
-| A26 | COMPUTED | `analytics.exposure.emphasis_count` @ 9d9e797 |
-| A27 | COMPUTED | `analytics.exposure.exposure_score` @ 9d9e797 |
-| A28 | SOURCE_FACT | doc 38: “Our Underground and Infrastructure segment provides comprehensive infrastructure solutions to customers involved in the transportation, distribution, storage, d” |
-| A29 | SOURCE_FACT | doc 38: “increased demand for data center and other technology infrastructure and advanced manufacturing facilities” |
-| A30 | SOURCE_FACT | doc 38: “the investment of capital into the build out of data centers by technology customers in order to, among other things, expand cloud-based services and develop ar” |
-| A31 | SOURCE_FACT | doc 38: “Quanta is well positioned to provide turnkey infrastructure solutions for these facilities, such as critical-path low-voltage electrical infrastructure solution” |
-| A32 | SOURCE_FACT | doc 38: “In particular, we believe there are opportunities to provide fiber and other services in and around data centers, and to interconnect data centers.” |
-| A33 | SOURCE_FACT | doc 38: “Amounts represent capital committed for the expansion of certain manufacturing facilities and expansion of our equipment fleet.” |
-| A34 | SOURCE_FACT | doc 38: “Backlog $ 25,866,287 $ 43,976,408” |
-| A35 | SOURCE_FACT | doc 34: “utilities are continuing to invest significant capital in their electric power delivery systems through multi-year grid modernization and reliability programs, ” |
-| A36 | SOURCE_FACT | doc 34: “increasing demand for electricity associated with, among other things, data centers and other technology-related dynamics” |
-| A37 | SOURCE_FACT | doc 34: “strong demand for these services by data center, manufacturing, semiconductor and other large load facilities” |
-| A38 | SOURCE_FACT | doc 34: “$48.47 billion” |
-| A39 | SOURCE_FACT | doc 34: “The cost-effectiveness of solar, wind energy and battery storage, combined with a meaningful increase in current and forecasted electricity demand is continuing” |
-| A40 | SOURCE_FACT | doc 34: “high demand for new and expanded transmission, substation and distribution infrastructure needed to reliably transport power.” |
-| A41 | COMPUTED | `analytics.exposure.emphasis_count` @ 9d9e797 |
-| A42 | COMPUTED | `analytics.exposure.exposure_score` @ 9d9e797 |
-| A43 | SOURCE_FACT | doc 44: “The dollar amount of backlog as of December 31, 2025 was $2.3 billion.” |
-| A44 | SOURCE_FACT | doc 44: “Our Systems Protection business provides innovative solutions to help protect electronics, systems and data in mission critical applications, including data cen” |
-| A45 | SOURCE_FACT | doc 44: “The Electrical Products Group is a leading provider of infrastructure solutions, designed to help ensure safe and reliable electrical operations primarily in th” |
-| A46 | SOURCE_FACT | doc 42: “Systems Protection and Electrical Connections, which represented approximately 72% and 28% of total revenues during the first three months of 2026, respectively” |
-| A47 | SOURCE_FACT | doc 42: “including power utilities and data centers.” |
-| A48 | SOURCE_FACT | doc 42: “including data centers” |
-| A49 | COMPUTED | `analytics.exposure.emphasis_count` @ 9d9e797 |
-| A50 | COMPUTED | `analytics.exposure.exposure_score` @ 9d9e797 |
+| A69 | SOURCE_FACT | doc 13: “Fibrebond is a U.S. based designer and builder of pre-integrated modular power enclosures for data center, industrial, utility and communications customers.” |
+| A70 | SOURCE_FACT | doc 13: “$ 3,600” |
+| A71 | SOURCE_FACT | doc 13: “$ 14,459” |
+| A72 | SOURCE_FACT | doc 13: “$ 922” |
+| A73 | COMPUTED | `analytics.exposure.emphasis_count` @ 9a7649c |
+| A74 | COMPUTED | `analytics.exposure.exposure_score` @ 9a7649c |
+| A77 | SOURCE_FACT | doc 23: “Operating income (loss) $ 1,388 $ 471 $ (923)” |
+| A78 | SOURCE_FACT | doc 23: “to electrify industries including data centers playing a key role in the development of artificial intelligence (AI)” |
+| A79 | SOURCE_FACT | doc 20: “$ 2,959” |
+| A80 | SOURCE_FACT | doc 20: “$ 4,971” |
+| A81 | SOURCE_FACT | doc 20: “$ 42,440” |
+| A82 | SOURCE_FACT | doc 20: “$ 99,694” |
+| A83 | SOURCE_FACT | doc 20: “$ 528” |
+| A84 | SOURCE_FACT | doc 20: “$ 811” |
+| A85 | COMPUTED | `analytics.exposure.emphasis_count` @ 9a7649c |
+| A86 | COMPUTED | `analytics.exposure.exposure_score` @ 9a7649c |
+| A89 | SOURCE_FACT | doc 31: “Utility Solutions $ 948.9 $ 857.1” |
+| A90 | SOURCE_FACT | doc 31: “Electrical Solutions 567.8 508.1” |
+| A91 | SOURCE_FACT | doc 31: “Operating Income: Utility Solutions $ 175.1 $ 150.8” |
+| A92 | SOURCE_FACT | doc 31: “backlog intangible assets” |
+| A93 | SOURCE_FACT | doc 31: “$ 167.9 million” |
+| A94 | COMPUTED | `analytics.exposure.emphasis_count` @ 9a7649c |
+| A95 | COMPUTED | `analytics.exposure.exposure_score` @ 9a7649c |
+| A98 | SOURCE_FACT | doc 38: “Our utility customers continue to face increased demand for electricity, including as a result of electrification trends and increased demand for data center an” |
+| A99 | SOURCE_FACT | doc 38: “high-voltage substation, transformer and transmission interconnection infrastructure to connect the facilities to the power grid” |
+| A100 | SOURCE_FACT | doc 38: “the investment of capital into the build out of data centers by technology customers in order to, among other things, expand cloud-based services and develop ar” |
+| A101 | SOURCE_FACT | doc 38: “Backlog $ 21,944,092 $ 36,166,706” |
+| A102 | SOURCE_FACT | doc 38: “Backlog $ 3,922,195 $ 7,809,702” |
+| A103 | SOURCE_FACT | doc 38: “high-voltage electric transmission and substation infrastructure, that is necessary to enhance grid resiliency and interconnect and transmit electricity from ne” |
+| A104 | SOURCE_FACT | doc 34: “$48.47 billion as of March 31, 2026” |
+| A105 | SOURCE_FACT | doc 34: “$391.7 million of net cash provided by operating activities” |
+| A106 | SOURCE_FACT | doc 34: “10.2%” |
+| A107 | SOURCE_FACT | doc 34: “data centers and other technology-related dynamics” |
+| A108 | COMPUTED | `analytics.exposure.emphasis_count` @ 9a7649c |
+| A109 | COMPUTED | `analytics.exposure.exposure_score` @ 9a7649c |
+| A112 | SOURCE_FACT | doc 44: “for approximately $1.1 billion in cash.” |
+| A113 | SOURCE_FACT | doc 44: “for approximately $0.7 billion in cash.” |
+| A114 | SOURCE_FACT | doc 44: “for approximately $1.0 billion in cash.” |
+| A115 | SOURCE_FACT | doc 44: “The dollar amount of backlog as of December 31, 2025 was $2.3 billion.” |
+| A116 | SOURCE_FACT | doc 42: “$ 1,242.0” |
+| A117 | SOURCE_FACT | doc 42: “28% of total revenues during the first three months of 2026, respectively.” |
+| A118 | SOURCE_FACT | doc 42: “data centers business that is primarily in our Systems Protection segment.” |
+| A119 | SOURCE_FACT | doc 42: “including power utilities and data centers.” |
+| A120 | COMPUTED | `analytics.exposure.emphasis_count` @ 9a7649c |
+| A121 | COMPUTED | `analytics.exposure.backlog_ratio` @ 9a7649c |
+| A122 | COMPUTED | `analytics.exposure.exposure_score` @ 9a7649c |
+| A125 | SOURCE_FACT | doc 7: “IPUTIL@2025-06-01 vintage 2026-07-17” |
+| A126 | SOURCE_FACT | doc 7: “IPUTIL@2025-07-01 vintage 2026-07-17” |
+| A127 | SOURCE_FACT | doc 7: “IPUTIL@2025-08-01 vintage 2026-07-17” |
+| A128 | SOURCE_FACT | doc 7: “IPUTIL@2025-09-01 vintage 2026-07-17” |
+| A129 | SOURCE_FACT | doc 7: “IPUTIL@2025-10-01 vintage 2026-07-17” |
+| A130 | SOURCE_FACT | doc 7: “IPUTIL@2025-11-01 vintage 2026-07-17” |
+| A131 | SOURCE_FACT | doc 7: “IPUTIL@2025-12-01 vintage 2026-07-17” |
+| A132 | SOURCE_FACT | doc 7: “IPUTIL@2026-01-01 vintage 2026-07-17” |
+| A133 | SOURCE_FACT | doc 7: “IPUTIL@2026-02-01 vintage 2026-07-17” |
+| A134 | SOURCE_FACT | doc 7: “IPUTIL@2026-03-01 vintage 2026-07-17” |
+| A135 | SOURCE_FACT | doc 7: “IPUTIL@2026-04-01 vintage 2026-07-17” |
+| A136 | SOURCE_FACT | doc 7: “IPUTIL@2026-05-01 vintage 2026-07-17” |
+| A137 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-06-01 vintage 2026-07-17” |
+| A138 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-07-01 vintage 2026-07-17” |
+| A139 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-08-01 vintage 2026-07-17” |
+| A140 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-09-01 vintage 2026-07-17” |
+| A141 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-10-01 vintage 2026-07-17” |
+| A142 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-11-01 vintage 2026-07-17” |
+| A143 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2025-12-01 vintage 2026-07-17” |
+| A144 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2026-01-01 vintage 2026-07-17” |
+| A145 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2026-02-01 vintage 2026-07-17” |
+| A146 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2026-03-01 vintage 2026-07-17” |
+| A147 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2026-04-01 vintage 2026-07-17” |
+| A148 | SOURCE_FACT | doc 8: “CAPUTLG2211S@2026-05-01 vintage 2026-07-17” |
+| A149 | SOURCE_FACT | doc 9: “INDPRO@2025-06-01 vintage 2026-07-17” |
+| A150 | SOURCE_FACT | doc 9: “INDPRO@2025-07-01 vintage 2026-07-17” |
+| A151 | SOURCE_FACT | doc 9: “INDPRO@2025-08-01 vintage 2026-07-17” |
+| A152 | SOURCE_FACT | doc 9: “INDPRO@2025-09-01 vintage 2026-07-17” |
+| A153 | SOURCE_FACT | doc 9: “INDPRO@2025-10-01 vintage 2026-07-17” |
+| A154 | SOURCE_FACT | doc 9: “INDPRO@2025-11-01 vintage 2026-07-17” |
+| A155 | SOURCE_FACT | doc 9: “INDPRO@2025-12-01 vintage 2026-07-17” |
+| A156 | SOURCE_FACT | doc 9: “INDPRO@2026-01-01 vintage 2026-07-17” |
+| A157 | SOURCE_FACT | doc 9: “INDPRO@2026-02-01 vintage 2026-07-17” |
+| A158 | SOURCE_FACT | doc 9: “INDPRO@2026-03-01 vintage 2026-07-17” |
+| A159 | SOURCE_FACT | doc 9: “INDPRO@2026-04-01 vintage 2026-07-17” |
+| A160 | SOURCE_FACT | doc 9: “INDPRO@2026-05-01 vintage 2026-07-17” |
 
 ---
 *Model: `qwen3:30b-a3b@ad815644918f` · prompt 0945ea042f63… · all runs logged to `agent_runs`.*

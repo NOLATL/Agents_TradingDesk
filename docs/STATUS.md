@@ -17,18 +17,28 @@
 
 ## Current state
 
-- **Stage:** 0 — Define the Experiment — **COMPLETE, awaiting human review**
-- **Gate:** approaching A (Gate A is the Stage 1 exit; Stage 0's own exit checklist is fully checked below)
-- **Done:** repo skeleton + uv-locked tooling; all 17 §3 tables as Pydantic + SQL with 74 passing round-trip/invariant tests (validated against scratch Compose Postgres 18.4, applied twice for idempotency, torn down); contracts for EDGAR/FRED/Stooq; EXPERIMENT_REGISTRY.md (EXP-001) with pre-declared Gate D criteria and the accepted null result; starter theme (grid constraint) + two candidates (nuclear renaissance, housing BTR pivot) in `docs/themes/`.
-- **Blocked:** nothing. **Stage 1 does not begin until the human reviews Stage 0.**
-- **Not built (per work order):** no ingestion, no agents, no simulator, no dashboard, no real rows.
+- **Stage:** 1 — Evidence Vertical Slice — **COMPLETE, awaiting human review at Gate A**
+- **Gate:** A (checklist below). **Stage 2 (simulator) does not begin until the human reviews Stage 1.**
+- **Done:** persistence layer (Compose dev DB, idempotent migrations, invariant-enforcing psycopg repository); ingestion adapters for Tiingo (replaced Stooq — see DECISIONS.md), FRED/ALFRED, and EDGAR with immutable sha256-keyed caching and exchange_calendars eligibility; pure-function analytics (exposure, valuation, quarantined momentum/volatility); pinned-Ollama inference wrapper logging every call to `agent_runs`; the four LLM roles with a tested blinding boundary; deterministic decision-packet renderer mirrored to the Obsidian vault (`~/obsidian-brain/TradingDesk/packets/`). Two full slice runs executed (23 successful LLM calls, zero failures); 122 tests pass.
+- **Slice outcome (honest):** both runs ended in reviewer **REJECT** — evidence insufficient to establish data-center-specific exposure purity; run 2's reviewer additionally used the quarantined momentum metrics to flag that price action may be driving the narrative. Both rejections logged to `research_genealogy` with do-nothing cases. An evidence-insufficient abstention is a valid, rewarded outcome by design.
+- **Open items for the human:**
+  1. Review the decision packet: `reporting/output/decision-packet-grid-constraint-2026-07-17.md`.
+  2. Backup wiring (restic → R2) now matters — the DB holds real research data. Needs R2 credentials; not wired yet.
+  3. ufw: nothing needed — Postgres remains localhost-bound.
 
-## Stage 0 exit check
+## Gate A — Data & Research Integrity (Stage 1 exit)
 
-- [x] Repo skeleton exists; tooling chosen and locked (uv, `uv.lock`); env actuals recorded in `DECISIONS.md`.
-- [x] All §3 tables exist as Pydantic + SQL, with provenance types, eligibility columns, exit-type enums, and the NAV taint flag structurally present.
-- [x] Schema round-trip + invariant-structure tests pass (74 passed against scratch Postgres; skipped cleanly when DB absent).
-- [x] Data-source contracts written for EDGAR, FRED, and Stooq (`contracts/`).
-- [x] `EXPERIMENT_REGISTRY.md` freezes EXP-001 with pre-declared Gate D criteria, including the accepted null result.
-- [x] One starter theme + two candidates drafted to the §5 template (`docs/themes/`).
-- [x] `STATUS.md` reflects all of the above.
+- [x] Every assertion in the decision packet traces to a source citation or a named Python function+version (provenance appendix + `tests/test_gate_a.py`).
+- [x] Point-in-time eligibility enforced with a test (`eligible_documents` gate; run 1 demonstrably excluded same-day FRED vintages whose eligibility was 4 minutes in the future).
+- [x] Basket construction demonstrably blinded to price history: analyst context is bit-identical with and without price data (`tests/test_blinding.py`); quarantined content raises `BlindingViolation`.
+- [x] Raw responses cached immutably; extractions reference stored hashes; re-runs insert zero duplicate documents (live double-runs for all three adapters + tests).
+- [x] Vendor/source discrepancies classified, not silently resolved (`data/reconcile.py`; a real `INCONSISTENT` incident fired on run 1's unit-mismatched figures).
+- [x] Thesis changes versioned (v1 DRAFT → v2 verdict, parent-linked); pre/post-review versions persisted; both rejected hypotheses logged to `research_genealogy`.
+- [x] Forecasts recorded with resolution criteria, horizons, and exit-type-aware semantics (6 per run; schema CHECKs + tests).
+- [x] `agent_runs` logs model tag@digest + prompt version for every LLM call (23/23 successful, all pinned to `qwen3:30b-a3b@ad815644918f`).
+- [x] Grid-constraint slice produced a complete human-readable decision packet in the Obsidian vault.
+- [x] `STATUS.md` and `DECISIONS.md` updated; env re-verifications done (ufw n/a — localhost only; R2/restic raised above as an open item).
+
+## Stage 0 exit check (complete 2026-07-17, human-reviewed)
+
+All seven boxes checked — see git history for the detailed Stage 0 checklist.
