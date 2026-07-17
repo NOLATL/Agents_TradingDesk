@@ -17,17 +17,18 @@
 
 ## Current state
 
-- **Stage:** 0 — Define the Experiment
-- **Gate:** approaching A (Gate A is the Stage 1 exit; Stage 0 has its own exit checklist below)
-- **Done:** (in progress — updated as deliverables land)
-- **Blocked:** nothing
+- **Stage:** 0 — Define the Experiment — **COMPLETE, awaiting human review**
+- **Gate:** approaching A (Gate A is the Stage 1 exit; Stage 0's own exit checklist is fully checked below)
+- **Done:** repo skeleton + uv-locked tooling; all 17 §3 tables as Pydantic + SQL with 74 passing round-trip/invariant tests (validated against scratch Compose Postgres 18.4, applied twice for idempotency, torn down); contracts for EDGAR/FRED/Stooq; EXPERIMENT_REGISTRY.md (EXP-001) with pre-declared Gate D criteria and the accepted null result; starter theme (grid constraint) + two candidates (nuclear renaissance, housing BTR pivot) in `docs/themes/`.
+- **Blocked:** nothing. **Stage 1 does not begin until the human reviews Stage 0.**
+- **Not built (per work order):** no ingestion, no agents, no simulator, no dashboard, no real rows.
 
 ## Stage 0 exit check
 
-- [ ] Repo skeleton exists; tooling chosen and locked; env actuals recorded in `DECISIONS.md`.
-- [ ] All §3 tables exist as Pydantic + SQL, with provenance types, eligibility columns, exit-type enums, and the NAV taint flag structurally present.
-- [ ] Schema round-trip + invariant-structure tests pass.
-- [ ] Data-source contracts written for EDGAR, FRED, and the price source.
-- [ ] `EXPERIMENT_REGISTRY.md` freezes the experiment with pre-declared Gate D criteria, including the accepted null result.
-- [ ] One starter theme + two candidates drafted to the §5 template.
-- [ ] `STATUS.md` reflects all of the above.
+- [x] Repo skeleton exists; tooling chosen and locked (uv, `uv.lock`); env actuals recorded in `DECISIONS.md`.
+- [x] All §3 tables exist as Pydantic + SQL, with provenance types, eligibility columns, exit-type enums, and the NAV taint flag structurally present.
+- [x] Schema round-trip + invariant-structure tests pass (74 passed against scratch Postgres; skipped cleanly when DB absent).
+- [x] Data-source contracts written for EDGAR, FRED, and Stooq (`contracts/`).
+- [x] `EXPERIMENT_REGISTRY.md` freezes EXP-001 with pre-declared Gate D criteria, including the accepted null result.
+- [x] One starter theme + two candidates drafted to the §5 template (`docs/themes/`).
+- [x] `STATUS.md` reflects all of the above.
