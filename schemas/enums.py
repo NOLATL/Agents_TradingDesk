@@ -67,13 +67,19 @@ class ThesisStatus(StrEnum):
 
 
 class OrderStatus(StrEnum):
-    """Every order passes PROPOSED → human gate (invariant 6) before any fill."""
+    """Every order passes PROPOSED → human gate (invariant 6) before any fill.
+
+    FORCED_LIQUIDATION is the single, narrow exception (spec §6 quarantine
+    timeout fallback): a system-generated order with no human approval, always
+    tied to a DataIncident, always tainting the NAV series it touches.
+    """
 
     PROPOSED = "PROPOSED"
     APPROVED = "APPROVED"          # human approved (possibly modified — logged separately)
     REJECTED = "REJECTED"          # human declined
     FILLED = "FILLED"
     CANCELLED = "CANCELLED"
+    FORCED_LIQUIDATION = "FORCED_LIQUIDATION"  # §6 fallback; see DECISIONS.md 2026-07-17
 
 
 class OrderSide(StrEnum):

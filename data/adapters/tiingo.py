@@ -36,7 +36,11 @@ class Bar:
     low: Decimal
     close: Decimal
     volume: int
+    adj_open: Decimal
+    adj_high: Decimal
+    adj_low: Decimal
     adj_close: Decimal
+    adj_volume: Decimal
     split_factor: Decimal
     div_cash: Decimal
 
@@ -72,7 +76,11 @@ def parse_bars(doc: Document, symbol: str) -> list[Bar]:
                     low=Decimal(str(row["low"])),
                     close=Decimal(str(row["close"])),
                     volume=int(row.get("volume") or 0),
+                    adj_open=Decimal(str(row.get("adjOpen", row["open"]))),
+                    adj_high=Decimal(str(row.get("adjHigh", row["high"]))),
+                    adj_low=Decimal(str(row.get("adjLow", row["low"]))),
                     adj_close=Decimal(str(row["adjClose"])),
+                    adj_volume=Decimal(str(row.get("adjVolume", row.get("volume") or 0))),
                     split_factor=Decimal(str(row.get("splitFactor", 1))),
                     div_cash=Decimal(str(row.get("divCash", 0))),
                 )

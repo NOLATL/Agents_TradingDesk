@@ -143,11 +143,13 @@ def _json_doc(payload: str) -> Document:
 def test_tiingo_parse_skips_malformed_rows():
     payload = """[
       {"date":"2026-07-15T00:00:00.000Z","open":100,"high":101,"low":99,"close":100.5,
-       "volume":1000,"adjClose":100.5,"splitFactor":1,"divCash":0},
+       "volume":1000,"adjOpen":100,"adjHigh":101,"adjLow":99,"adjClose":100.5,
+       "adjVolume":1000,"splitFactor":1,"divCash":0},
       {"date":"2026-07-16T00:00:00.000Z","open":null,"high":null,"low":null,"close":null,
        "volume":null,"adjClose":null,"splitFactor":1,"divCash":0},
       {"date":"2026-07-17T00:00:00.000Z","open":101,"high":102,"low":100,"close":101.5,
-       "volume":2000,"adjClose":101.5,"splitFactor":1,"divCash":0}
+       "volume":2000,"adjOpen":101,"adjHigh":102,"adjLow":100,"adjClose":101.5,
+       "adjVolume":2000,"splitFactor":1,"divCash":0}
     ]"""
     bars = parse_bars(_json_doc(payload), "ETN")
     assert [b.session.day for b in bars] == [15, 17]  # null row = absence, not fill

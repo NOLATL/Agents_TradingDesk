@@ -304,6 +304,7 @@ class DataIncident(DeskModel):
     """Classified vendor discrepancies and corporate-action quarantines (§6, §8)."""
 
     id: int | None = None
+    experiment_id: int | None = None  # set for quarantine incidents; ingestion incidents may have none
     incident_class: IncidentClass
     status: IncidentStatus
     source_name: str
@@ -351,6 +352,46 @@ class ResearchGenealogy(DeskModel):
     created_at: datetime
 
 
+class PriceBar(DeskModel):
+    """Indexed read-through cache of Tiingo bars (migration 002). Derived, never
+
+    authoritative: `source_doc_hash` points at the immutable document; the
+    rebuild-proof test guarantees TRUNCATE + rebuild is bit-identical.
+    """
+
+    id: int | None = None
+    symbol: str
+    session_date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    adj_open: Decimal
+    adj_high: Decimal
+    adj_low: Decimal
+    adj_close: Decimal
+    adj_volume: Decimal
+    split_factor: Decimal = Decimal(1)
+    div_cash: Decimal = Decimal(0)
+    source_doc_hash: str
+
+
+class SimulationRun(DeskModel):
+    """Replay manifest + result fingerprint (Gate B evidence). Same manifest ⇒
+
+    same result_hash, or the operational breaker trips (determinism breach).
+    """
+
+    id: int | None = None
+    experiment_id: int
+    manifest: dict[str, Any]
+    manifest_hash: str
+    result_hash: str
+    code_commit: str
+    created_at: datetime
+
+
 # --------------------------------------------------------------------------- #
 # Table registry for round-trip tests
 # --------------------------------------------------------------------------- #
@@ -373,4 +414,6 @@ TABLE_MODELS: dict[str, type[DeskModel]] = {
     "data_incidents": DataIncident,
     "experiments": Experiment,
     "research_genealogy": ResearchGenealogy,
+    "price_bars": PriceBar,
+    "simulation_runs": SimulationRun,
 }

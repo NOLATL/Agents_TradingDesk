@@ -39,12 +39,12 @@ def conn():
         pytest.skip(
             "dev Postgres not running — start it with: docker compose up -d --wait"
         )
-    with open("schemas/ddl.sql") as f:
-        ddl = f.read()
-    connection.execute(ddl)
-    # Idempotency requirement: applying the DDL twice must be safe.
-    connection.execute(ddl)
-    connection.commit()
+    from data.migrate import migrate
+
+    # Full ordered migrations (001 = ddl.sql content, 002+ = engine deltas),
+    # applied via the real runner; a second call proves idempotency.
+    migrate(connection)
+    migrate(connection)
     yield connection
     connection.close()
 
