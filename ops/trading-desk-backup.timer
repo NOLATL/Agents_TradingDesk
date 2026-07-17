@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly trading desk backup at 02:30 local
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

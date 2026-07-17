@@ -69,6 +69,14 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 
 **Engine determinism architecture.** `simulate()` is a pure function (no DB/clock/randomness inside `analytics/engine/`; a purity lint test enforces it); replay inputs are an explicit `ReplayManifest` (stored in `simulation_runs`); human quarantine resolutions are HUMAN-provenance assertions and therefore replay *inputs*. Sizing (floats/sklearn permitted) runs at proposal time, upstream of the replay boundary. `equal_weight_sp500_proxy` control uses the RSP ETF as its proxy series.
 
+## 2026-07-17 — Stage 2 build notes
+
+- **Backup wiring:** `ops/backup.sh` (nightly `pg_dump | gzip` → `~/backups/trading-desk/`, 14-day rolling, then `rclone copy` of the sealed file to `gdrive:trading-desk-backups`), driven by a **user systemd timer** (`ops/trading-desk-backup.{service,timer}`, 02:30 nightly, `Persistent=true`, linger enabled). `ops/restore_test.sh` restores the newest dump into an isolated throwaway Compose project (`-p tradingdesk-restore`, tmpfs, port 55433) and asserts schema/row sanity — **passed 2026-07-17** (20 tables, 5,893 price_bars, 145 typed assertions). rclone + gh installed to `~/.local/bin` (no sudo).
+- **OPEN (human auth pending):** the interactive OAuth steps for the `gdrive` rclone remote and `gh auth login` were deferred by the human at Gate B close. Until then the offsite Drive leg exits 3 ("remote not configured" — loud, not silent) and no GitHub remote exists. Commands are recorded in STATUS.md; everything downstream is wired.
+- **Restore-test isolation lesson:** the first restore-test run reused the default Compose project name and recreated the dev DB container (the named volume survived; no data lost). Fixed: the script uses `-p tradingdesk-restore` so backup drills can never touch the dev database.
+- **Benchmark symbols:** SPY + RSP ingested via the Tiingo adapter alongside the slice symbols; all four controls run forward on real data (134 sessions) with bit-identical replay.
+- **Slippage config:** conservative starter tiers — 10 bps default, 20 bps ≥ 0.40 annualized vol, 35 bps ≥ 0.60. Calibration against observed opens is Stage 3 work.
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)

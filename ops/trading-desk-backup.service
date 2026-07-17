@@ -1,0 +1,11 @@
+# Install (user units, no sudo):
+#   mkdir -p ~/.config/systemd/user
+#   ln -sf ~/projects/Agents_TradingDesk/ops/trading-desk-backup.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now trading-desk-backup.timer
+#   loginctl enable-linger jared   # timers fire without an active session
+[Unit]
+Description=Trading desk nightly DB backup (pg_dump -> local -> Google Drive)
+
+[Service]
+Type=oneshot
+ExecStart=%h/projects/Agents_TradingDesk/ops/backup.sh

@@ -17,8 +17,35 @@
 
 ## Current state
 
-- **Stage:** 1 — Evidence Vertical Slice — **COMPLETE, awaiting human review at Gate A**
-- **Gate:** A (checklist below). **Stage 2 (simulator) does not begin until the human reviews Stage 1.**
+- **Stage:** 2 — Deterministic Portfolio Laboratory — **COMPLETE, awaiting human review at Gate B**
+- **Gate:** B (checklist below). **Stage 3 (forward paper workflow) does not begin until the human reviews Stage 2.**
+- **Done:** pure-function simulator (`analytics/engine/`): FIFO ledger with wash-sale candidates, adverse-slippage fill model, corporate actions + MTM, quarantine state machine (both branches), four forward controls on identical costs, four breakers, cluster-risk-budgeting sizing with hard §8 caps, calibration metrics with the invariant-7 resolution authority. `price_bars` read-through cache (rebuild-proof), `simulation_runs` manifests, `FORCED_LIQUIDATION` order status (documented invariant-6 exception). Backups: nightly timer live, local dump + restore test passed. 190 tests pass.
+- **Headline evidence:** canonical-bytes replay is **bit-identical** — fixed scenarios, Hypothesis-generated scenarios, the full DB fixture path, and 134 real sessions over 7 symbols (result hash `cf77b02e…`). Same-manifest-different-result raises `DeterminismBreach`.
+
+## Open items (human)
+
+1. **Offsite auth (deferred at Gate B close):** run
+   `~/.local/bin/rclone config create gdrive drive scope=drive.file` (Drive backups) and
+   `~/.local/bin/gh auth login --web --git-protocol https` then tell Claude to push the private repo. Until then backups are local-only (the script fails loudly on the missing remote, never silently).
+2. Review the Gate B evidence below and the DECISIONS.md Stage 2 entries.
+
+## Gate B — Simulation Integrity (Stage 2 exit)
+
+- [x] **Ledger determinism:** formal replay test — same snapshot + config + code + approved orders ⇒ bit-identical canonical result (pure + DB-path + real-data; `tests/engine/test_replay.py`, `test_gate_b_db.py`).
+- [x] Cash, dividends, splits, fills, NAV reconcile: `nav == cash + positions_value` asserted every session in the loop and re-checked in tests; dividend/split scenario tests pass.
+- [x] Four controls run on identical timing + cost assumptions — verified by test (benchmark fills route through the same `fill_price`/tiers; benchmarks step every session).
+- [x] **Quarantine exercised end to end:** unsupported action freezes-and-marks → data-integrity breaker → classified incident → human-resolution branch AND timeout force-liquidation with `contains_forced_resolution` taint-forward on real `daily_nav` rows.
+- [x] Four `ExitType`s produce correct effects: `forecast_resolution_effect` is the single authority; PRICE_STOP/VALUATION_EXIT resolve nothing (tests).
+- [x] Fills: raw prices at next valid session open, correctly-signed adverse slippage, `slippage_applied` recorded.
+- [x] Cluster risk budgeting respects §8 caps; caps-bind test drives a correlated basket into the theme cap.
+- [x] `price_bars` provably rebuildable bit-identically from immutable documents; every row references a stored hash.
+- [x] Hypothesis property tests (ledger conservation, identity+determinism), scenario tests (CAs, exit types), idempotency preserved (migrations, adapters, persist).
+- [~] Backups: nightly `pg_dump|gzip` → local rolling dir ✓, systemd timer live ✓, **restore test passed** ✓; Drive offsite + GitHub remote **pending the human auth steps above** (open item 1).
+- [x] `STATUS.md` / `DECISIONS.md` updated (price_bars ruling, FIFO lot rule, R2→Drive substitution, restore-isolation lesson).
+
+## Gate A (Stage 1) — complete, human-reviewed 2026-07-17
+
+All ten boxes held; see git history for the detailed checklist.
 - **Done:** persistence layer (Compose dev DB, idempotent migrations, invariant-enforcing psycopg repository); ingestion adapters for Tiingo (replaced Stooq — see DECISIONS.md), FRED/ALFRED, and EDGAR with immutable sha256-keyed caching and exchange_calendars eligibility; pure-function analytics (exposure, valuation, quarantined momentum/volatility); pinned-Ollama inference wrapper logging every call to `agent_runs`; the four LLM roles with a tested blinding boundary; deterministic decision-packet renderer mirrored to the Obsidian vault (`~/obsidian-brain/TradingDesk/packets/`). Two full slice runs executed (23 successful LLM calls, zero failures); 122 tests pass.
 - **Slice outcome (honest):** both runs ended in reviewer **REJECT** — evidence insufficient to establish data-center-specific exposure purity; run 2's reviewer additionally used the quarantined momentum metrics to flag that price action may be driving the narrative. Both rejections logged to `research_genealogy` with do-nothing cases. An evidence-insufficient abstention is a valid, rewarded outcome by design.
 - **Open items for the human:**
