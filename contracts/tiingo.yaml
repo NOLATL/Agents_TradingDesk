@@ -1,0 +1,57 @@
+# Data contract: Tiingo (spec §3.6). Primary EOD price source — replaced Stooq
+# on 2026-07-17 after Stooq's CSV endpoint went behind an anti-bot challenge
+# (docs/DECISIONS.md). Human-confirmed replacement.
+source_name: tiingo
+description: End-of-day OHLCV (raw + adjusted) for US equities; JSON API, free API key.
+endpoints:
+  - https://api.tiingo.com/tiingo/daily/{ticker}/prices
+auth: api_key (free registration; TIINGO_API_KEY in .env, never stored in documents or LLM context)
+
+data_semantics:
+  raw_or_adjusted: >
+    BOTH, explicitly: each observation carries raw open/high/low/close/volume
+    AND adjOpen/adjHigh/adjLow/adjClose/adjVolume plus divCash and splitFactor.
+    Fill accounting (Stage 2) uses RAW prices as of trade date from the
+    immutable cached response; analytics (volatility, momentum controls) use
+    the adjusted series. splitFactor/divCash make corporate actions explicit
+    rather than silently back-adjusted — better than the Stooq contract could
+    offer.
+  currency: USD
+  timezone: America/New_York
+  session_date_rule: >
+    An observation dated D covers NYSE session D per exchange_calendars. The
+    bar is final after the session close; first_eligible_decision_time = next
+    XNYS session open after ingestion (we trade at opens).
+  corporate_action_treatment: >
+    Splits and dividends are explicit fields (splitFactor != 1, divCash > 0) —
+    the Stage 1 reconciliation classifies discrepancies between re-fetches
+    using these fields directly (SPLIT / DIVIDEND), falling back to BAD_PRINT.
+    Symbol disappearance or unclassifiable jumps → UNSUPPORTED_CORPORATE_ACTION
+    → quarantine (§6).
+  null_rule: >
+    Missing observation on an expected trading session = MISSING_BAR incident,
+    never forward-filled or interpolated.
+
+revision_policy: >
+  Historical corrections are possible; every fetch is cached immutably to
+  documents, so a revised history is a new hash and diffs are detectable.
+  source_revision_time = ingestion_time of the first fetch showing changed
+  history.
+
+source_priority: 1               # primary EOD source
+fallback_sources: []             # none in Stage 1; cross-vendor checks deferred (DECISIONS.md)
+expected_publication_delay: >
+  EOD data available shortly after close; adapter fetches in the nightly
+  window and records actual ingestion_time.
+
+rate_limit: >
+  Free tier: 1000 requests/day, 50 symbols/hour, 500 unique symbols/month.
+  The 5-symbol slice is far inside all three. The 500-name Stage 3 universe
+  requires the paid tier — recorded as a known scaling cost, decided when
+  Stage 3 planning happens. On 429, halt and raise STALE_DATA, do not retry.
+
+license_permitted_use: >
+  Tiingo EULA (free tier): data for personal/internal use with attribution;
+  no redistribution of raw data. Cached raw responses stay local and are
+  never republished. Commercial/live use requires a commercial license —
+  pre-live gate alongside the broker gate.

@@ -35,6 +35,22 @@ Stage 0 dependencies (locked in `uv.lock`): `pydantic`, `psycopg[binary]`, `pyya
 
 Starter theme + candidates are drawn from the human's `Agents_Economics` research engine (`config/themes.yaml`, `obsidian-brain/Economics/hypotheses|concepts|research`) — human-directed. Stage 0 theme documents are *inputs* to the experiment; every factual claim in them will be re-derived with provenance by the Stage 1 evidence tooling before it can support a decision.
 
+## 2026-07-17 — Stage 1 decisions
+
+**Compose promotion.** `compose.scratch.yaml` → stable `compose.yaml` (named volume `pgdata`, localhost:55432, healthcheck); throwaway test DBs use the `compose.test.yaml` override (tmpfs, port 55433). Localhost-bound → no ufw rule needed.
+
+**Price source: Stooq → Tiingo.** Stooq's CSV endpoint now serves a JavaScript proof-of-work anti-bot challenge to non-browser clients — the plain-HTTP contract assumption failed in practice, and bypassing bot protection is off the table. **Human-confirmed replacement: Tiingo free tier** (`contracts/tiingo.yaml`; `contracts/stooq.yaml` removed, history in git). Tiingo is strictly better on data semantics (explicit raw+adjusted series, splitFactor/divCash fields) ; known scaling cost: the 500-name Stage 3 universe needs the paid tier. `TIINGO_API_KEY` lives in `.env`.
+
+**Transcripts deferred.** EDGAR carries no earnings-call transcripts (third-party/paywalled). Management-emphasis metrics are measured from filings text only (MD&A, 8-K/earnings releases) for the slice. Revisit if emphasis signals prove too sparse.
+
+**FRED key reuse.** `FRED_API_KEY` copied from `Agents_Economics/.env` into this project's `.env` (human-confirmed). The key is passed at request time only and scrubbed from stored `query_params` (`stored_params` mechanism in `data/adapters/core.py`).
+
+**Agents_Economics relationship (human-discussed).** The desk does NOT absorb Agents_Economics now. Economics remains the upstream hypothesis generator; promotions into the desk are tracked via `research_genealogy`. **Absorption trigger:** after the desk passes Gate B (and ideally Gate C), Economics' nightly audit duties can migrate into the desk's milestone-monitoring service (Stage 3); until then the codebases stay separate so untyped narrative assertions never enter the provenance system.
+
+**FRED series for the grid-constraint slice:** `IPUTIL` (Industrial Production: Utilities), `CAPUTLG2211S` (Capacity Utilization: Electric Power Generation/Transmission/Distribution), `INDPRO` (Industrial Production Index). Recorded in `config/experiment.yaml` and the theme doc.
+
+**No price_bars table.** Price observations are derived-on-read from immutably cached Tiingo JSON (`parse_bars`), not stored as rows — avoids a second source of truth for prices in Stage 1. Add a real table deliberately (migration 002 + this log) if Stage 2 analytics need indexed bars.
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)

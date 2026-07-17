@@ -29,3 +29,29 @@ frozen:
 tunable:
   quarantine_resolution_window_days: 5      # freeze-and-mark → human window before bounded auto-liquidation
   monthly_thesis_cull: true
+
+# Stage 1 vertical slice (grid-constraint theme; human-confirmed universe).
+stage1_slice:
+  theme: grid-constraint
+  strategy_tag: grid-constraint
+  symbols: [ETN, GEV, HUBB, PWR, NVT]       # chosen by GICS sub-industry + disclosure, never price
+  fred_series: [IPUTIL, CAPUTLG2211S, INDPRO]
+  edgar_forms: ["10-K", "10-Q", "8-K"]
+  edgar_filings_per_company: 6              # most recent N filings of the above forms
+  emphasis_terms:                           # deterministic term list for management-emphasis counts
+    - data center
+    - datacenter
+    - grid
+    - transformer
+    - switchgear
+    - electrification
+    - interconnection
+    - backlog
+    - utility capex
+    - artificial intelligence
+  llm:
+    base_url: http://localhost:11434/v1
+    model_tag: qwen3:30b-a3b
+    num_ctx: 40960
+    max_retries: 3
+  vault_dir: /home/jared/obsidian-brain/TradingDesk
