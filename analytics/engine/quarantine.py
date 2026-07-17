@@ -139,11 +139,23 @@ def apply_resolution(
     )
 
 
-def timeouts_due(state: PortfolioState, session: date) -> list[QuarantineCase]:
-    return [
+def timeouts_due(
+    state: PortfolioState, session: date, resolutions: tuple[ResolutionEvent, ...] = ()
+) -> list[QuarantineCase]:
+    due = [
         c for c in state.quarantine
         if c.phase is QuarantinePhase.OPEN and session >= c.timeout_session
     ]
+    # A resolution that targets a timing-out case but is dated AFTER the
+    # timeout is an invalid replay input — reject loudly, never apply late.
+    for case in due:
+        for res in resolutions:
+            if res.symbol == case.symbol and res.effective_session > case.timeout_session:
+                raise ValueError(
+                    f"resolution for {res.symbol} effective {res.effective_session} is after "
+                    f"timeout {case.timeout_session} — invalid replay input"
+                )
+    return due
 
 
 def incident_rows(state: PortfolioState) -> list[IncidentRow]:

@@ -137,7 +137,7 @@ def _quarantine_tick(state: PortfolioState, session, inp: SimulationInput,
     for case, res in quarantine_mod.resolutions_due(state, session, inp.resolutions):
         state = quarantine_mod.apply_resolution(state, case, res, session)
 
-    for case in quarantine_mod.timeouts_due(state, session):
+    for case in quarantine_mod.timeouts_due(state, session, inp.resolutions):
         pos = state.position(case.symbol)
         if pos is not None and pos.qty > 0:
             trade = TradeRow(
