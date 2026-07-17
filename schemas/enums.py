@@ -113,3 +113,20 @@ class IncidentStatus(StrEnum):
     OPEN = "OPEN"
     RESOLVED_HUMAN = "RESOLVED_HUMAN"          # human adjustment entry posted
     FORCED_LIQUIDATION = "FORCED_LIQUIDATION"  # bounded fallback; sets NAV taint flag
+
+
+# Python enum ↔ SQL enum type name (single source; used by the repository's
+# insert casts and by the round-trip tests).
+SQL_ENUM_NAMES: dict[type[StrEnum], str] = {
+    ProvenanceType: "provenance_type",
+    ExitType: "exit_type",
+    ForecastOutcome: "forecast_outcome",
+    ResolutionCause: "resolution_cause",
+    ThesisStatus: "thesis_status",
+    OrderStatus: "order_status",
+    OrderSide: "order_side",
+    MilestoneStatus: "milestone_status",
+    AgentRole: "agent_role",
+    IncidentClass: "incident_class",
+    IncidentStatus: "incident_status",
+}

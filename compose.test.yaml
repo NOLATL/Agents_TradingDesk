@@ -1,0 +1,9 @@
+# Override for throwaway test DBs: tmpfs storage, separate port.
+# Usage: docker compose -f compose.yaml -f compose.test.yaml up -d --wait
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:55433:5432"
+    volumes: !override []
+    tmpfs:
+      - /var/lib/postgresql

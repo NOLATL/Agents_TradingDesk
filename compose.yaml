@@ -1,0 +1,22 @@
+# Stage 1 dev database. Localhost-bound (no ufw rule needed).
+# Promoted from compose.scratch.yaml per docs/DECISIONS.md 2026-07-17 (Stage 1).
+# Tests that need a throwaway DB use `docker compose -f compose.yaml -f compose.test.yaml`.
+services:
+  db:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: desk
+      POSTGRES_PASSWORD: desk
+      POSTGRES_DB: trading_desk
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql   # 18+ images store data in a subdir of this path
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U desk -d trading_desk"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:

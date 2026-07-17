@@ -24,21 +24,11 @@ import pytest
 from schemas import enums as desk_enums
 from schemas.models import TABLE_MODELS
 
-SCRATCH_DSN = "host=127.0.0.1 port=55432 dbname=trading_desk_scratch user=scratch password=scratch"
+from data.db import dsn as desk_dsn
 
-ENUM_SQL_NAMES = {
-    desk_enums.ProvenanceType: "provenance_type",
-    desk_enums.ExitType: "exit_type",
-    desk_enums.ForecastOutcome: "forecast_outcome",
-    desk_enums.ResolutionCause: "resolution_cause",
-    desk_enums.ThesisStatus: "thesis_status",
-    desk_enums.OrderStatus: "order_status",
-    desk_enums.OrderSide: "order_side",
-    desk_enums.MilestoneStatus: "milestone_status",
-    desk_enums.AgentRole: "agent_role",
-    desk_enums.IncidentClass: "incident_class",
-    desk_enums.IncidentStatus: "incident_status",
-}
+SCRATCH_DSN = desk_dsn()  # Stage 1: runs against the Compose dev DB (compose.yaml)
+
+ENUM_SQL_NAMES = desk_enums.SQL_ENUM_NAMES
 
 
 @pytest.fixture(scope="session")
@@ -47,8 +37,7 @@ def conn():
         connection = psycopg.connect(SCRATCH_DSN, connect_timeout=3)
     except psycopg.OperationalError:
         pytest.skip(
-            "scratch Postgres not running — start it with: "
-            "docker compose -f compose.scratch.yaml up -d --wait"
+            "dev Postgres not running — start it with: docker compose up -d --wait"
         )
     with open("schemas/ddl.sql") as f:
         ddl = f.read()
