@@ -1,0 +1,31 @@
+# Config baseline for experiment EXP-001 (frozen by docs/EXPERIMENT_REGISTRY.md).
+# Config over hardcoding: services read these values; none are scattered literals.
+# Changing any value under `frozen:` after Stage 0 means a NEW experiment id.
+
+experiment_id: EXP-001
+
+frozen:
+  universe: sp500_current_forward_only
+  paper_capital_usd: 10000
+  positions:
+    min_concurrent: 6
+    max_concurrent: 10
+  risk_limits:
+    max_single_name_pct: 10
+    max_theme_pct: 25
+    max_sector_pct: 30
+    max_deployable_pct: 100
+    sizing_method: cluster_risk_budgeting   # inverse-vol within cluster; Ledoit-Wolf for cluster id
+  costs:
+    commission_usd: 0
+    slippage_model: tiered_adverse          # buy@open+adverse, sell@open−adverse; calibrated vs observed opens
+  rebalance: weekly_plus_event_driven
+  benchmarks: [spy, equal_weight_sp500_proxy, momentum_top10, same_basket_no_llm_timing]
+  models:
+    reasoning: qwen3:30b-a3b               # digest pinned in EXPERIMENT_REGISTRY.md
+  calendars: exchange_calendars             # never assume Mon–Fri
+
+# Values below may be tuned before Stage 3 starts; once the forward run begins they freeze too.
+tunable:
+  quarantine_resolution_window_days: 5      # freeze-and-mark → human window before bounded auto-liquidation
+  monthly_thesis_cull: true

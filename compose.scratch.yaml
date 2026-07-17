@@ -1,0 +1,14 @@
+# Scratch Postgres for schema validation only (Stage 0 tests).
+# Localhost-bound; torn down with `docker compose -f compose.scratch.yaml down -v`.
+# The real project database Compose file arrives in Stage 1.
+services:
+  scratch-db:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: scratch
+      POSTGRES_PASSWORD: scratch
+      POSTGRES_DB: trading_desk_scratch
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
