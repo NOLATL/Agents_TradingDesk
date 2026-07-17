@@ -1,0 +1,60 @@
+# Data contract: Stooq (spec §3.6). Primary EOD price source (human-confirmed
+# decision, see docs/DECISIONS.md 2026-07-17).
+source_name: stooq
+description: Free end-of-day OHLCV for US equities; CSV endpoint, no API key.
+endpoints:
+  - https://stooq.com/q/d/l/?s={symbol}.us&i=d   # daily CSV download
+
+data_semantics:
+  raw_or_adjusted: >
+    Stooq daily series are split-adjusted and dividend-adjusted (back-adjusted
+    close). IMPORTANT consequence: historical rows CHANGE when a new split or
+    dividend occurs. The ledger must therefore book fills at the price as
+    ingested on trade date (immutable documents row), never by re-reading the
+    adjusted series later. Adjusted history is used for analytics (volatility,
+    momentum controls), not for fill accounting.
+  currency: USD (".us" suffix universe)
+  timezone: America/New_York
+  session_date_rule: >
+    A bar dated D covers the NYSE session D per exchange_calendars. The bar is
+    not final until after the session close; first_eligible_decision_time =
+    next session open after ingestion (we trade at opens, so a bar ingested
+    overnight is first usable for the following open).
+  corporate_action_treatment: >
+    Splits/dividends arrive silently as back-adjustment of history. The Stage 1
+    reconciliation job detects them by comparing previously ingested rows with
+    re-fetched rows; a mismatch raises a data_incident classified SPLIT or
+    DIVIDEND (or BAD_PRINT if no corroborating action). Unsupported actions
+    (mergers, spin-offs, delistings) surface as symbol disappearance or
+    unclassifiable jumps → UNSUPPORTED_CORPORATE_ACTION → quarantine (§6).
+  null_rule: >
+    Missing bar on an expected trading session = MISSING_BAR incident, never
+    forward-filled. Zero-volume rows are kept as-is and flagged for review.
+
+revision_policy: >
+  Whole-history re-adjustment on corporate actions (see above); occasional bad
+  prints corrected in place. Every fetch is cached immutably to documents, so
+  each revision is a new hash and diffs are detectable. source_revision_time =
+  ingestion_time of the first fetch that showed changed history.
+
+source_priority: 1               # primary EOD source
+fallback_sources: []             # none in Stage 1; discrepancies have no arbiter yet —
+                                 # cross-vendor checks are a deferred idea (DECISIONS.md)
+expected_publication_delay: >
+  EOD bars typically available within a few hours after the 16:00 ET close;
+  adapter fetches in the nightly ingestion window and records actual
+  ingestion_time rather than assuming availability.
+
+rate_limit: >
+  No published API limit; Stooq throttles by IP with a daily download cap.
+  Adapter fetches once per symbol per day, sequentially with courtesy delay —
+  the nightly S&P 500 sweep (~503 requests) must stay under the cap; on hitting
+  the "Exceeded the daily hits limit" response, halt and raise a data_incident
+  (STALE_DATA) rather than retrying.
+
+license_permitted_use: >
+  Stooq terms permit free personal, non-commercial use. No redistribution of
+  raw data. This paper-trading research experiment is personal/non-commercial;
+  cached raw responses stay local and are never republished. If the project
+  ever moves toward live/commercial use, this source must be replaced with a
+  licensed feed — recorded as a hard pre-live gate alongside the broker gate.

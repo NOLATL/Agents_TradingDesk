@@ -1,0 +1,43 @@
+# Data contract: SEC EDGAR (spec §3.6). A document, not code — Stage 1 adapters
+# implement it; eligibility timestamps are derived from these rules.
+source_name: sec_edgar
+description: SEC filings (10-K/10-Q/8-K, proxies) and full-text search; primary evidence source.
+endpoints:
+  - https://www.sec.gov/cgi-bin/browse-edgar
+  - https://data.sec.gov/submissions/
+  - https://efts.sec.gov/LATEST/search-index  # full-text search
+
+data_semantics:
+  raw_or_adjusted: raw            # filings are immutable documents; no adjustment concept
+  currency: USD                   # as-reported; foreign issuers may report otherwise — take as-filed
+  timezone: America/New_York      # EDGAR acceptance timestamps are US/Eastern
+  session_date_rule: >
+    first_eligible_decision_time = acceptance-datetime (ET) mapped to the next
+    NYSE session open per exchange_calendars. A filing accepted after 17:30 ET
+    (EDGAR dissemination cutoff) is treated as published the next business day,
+    then mapped to the following session open.
+  corporate_action_treatment: not_applicable   # documents, not price series
+  null_rule: >
+    A missing expected filing (e.g. 10-Q past due) is an absence, not a null —
+    never synthesized. Persistent absence raises a data_incident (STALE_DATA).
+
+revision_policy: >
+  Amendments arrive as new documents (10-K/A etc.), never mutations. Store the
+  amendment as a new immutable documents row; source_revision_time on the
+  original points at the amendment's acceptance time. Extractions from the
+  original remain valid citations of what was known when.
+
+source_priority: 1                # authoritative for filings; no fallback source
+expected_publication_delay: >
+  Acceptance to public dissemination: minutes. 10-K: up to 60-90 days after
+  fiscal year end; 10-Q: up to 40-45 days after quarter end; 8-K: 4 business
+  days after the event. event_time = period end (10-K/Q) or triggering event
+  (8-K); publication_time = EDGAR acceptance-datetime.
+
+rate_limit: 10 requests/second max, with declared User-Agent including contact
+  email (SEC fair-access policy). Adapter must throttle and back off on 429.
+
+license_permitted_use: >
+  US government public-domain data. No license restriction on use or storage.
+  Fair-access policy requires identifying User-Agent and rate compliance.
+  Permitted: immutable caching, extraction, research, redistribution.

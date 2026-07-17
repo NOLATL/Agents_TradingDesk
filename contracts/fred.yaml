@@ -1,0 +1,49 @@
+# Data contract: FRED / ALFRED (spec §3.6). ALFRED vintages are mandatory where
+# revisions matter (GDP, employment) — current-series FRED is look-ahead for
+# any historical reasoning (spec §3.1).
+source_name: fred
+description: Federal Reserve Economic Data; macro series with ALFRED real-time vintages.
+endpoints:
+  - https://api.stlouisfed.org/fred/series/observations          # current series
+  - https://api.stlouisfed.org/fred/series/observations?realtime_start=...  # ALFRED vintages
+auth: api_key (free registration; stored in .env, never in LLM context)
+
+data_semantics:
+  raw_or_adjusted: >
+    Per-series: seasonal adjustment is a property of the series id (e.g. UNRATE
+    is SA, UNRATENSA is NSA). The adapter records the series id verbatim; no
+    re-adjustment is ever performed locally.
+  currency: USD (or series-defined units; units field stored per observation)
+  timezone: America/Chicago      # St. Louis Fed release times published in US/Central
+  session_date_rule: >
+    first_eligible_decision_time = ALFRED realtime_start (the date the vintage
+    became publicly available) mapped to the next NYSE session open. The
+    observation date (event_time) is NEVER used for eligibility — a Q1 GDP
+    value is not knowable on March 31.
+  corporate_action_treatment: not_applicable
+  null_rule: >
+    FRED encodes missing observations as '.' — stored as NULL, never
+    interpolated. A vintage that revises a value away does not delete history;
+    each vintage is a separate immutable observation row.
+
+revision_policy: >
+  Revisions are first-class: every (series, observation_date, vintage_date)
+  triple is stored. For revision-prone series (GDP, payrolls, PCE) the adapter
+  MUST fetch via ALFRED with realtime bounds. publication_time = vintage_date;
+  source_revision_time = superseding vintage_date when one arrives.
+
+source_priority: 1               # authoritative for US macro; no fallback
+expected_publication_delay: >
+  Series-dependent: payrolls ~1 week after month end; CPI ~2 weeks; GDP advance
+  ~4 weeks after quarter end with two subsequent monthly revisions. The adapter
+  stores actual vintage dates rather than assuming a schedule.
+
+rate_limit: 120 requests/minute (documented API limit); adapter throttles below it.
+
+license_permitted_use: >
+  FRED API terms: free for non-commercial and internal use with attribution;
+  data itself largely US-government public domain, but some third-party series
+  carry their own restrictions — the adapter records the per-series copyright
+  field into documents.license_note. Permitted for this project: caching,
+  research, internal display. Not permitted: redistribution of restricted
+  third-party series.
