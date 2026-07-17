@@ -57,6 +57,18 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 - **The eligibility gate visibly worked**: FRED vintages ingested at ~13:07 UTC carried `first_eligible_decision_time` = same-day 13:30 UTC session open; the 13:26 UTC run correctly saw zero macro points. Not a bug — the anti-look-ahead guarantee behaving exactly as specified.
 - **Reviewer REJECT is a healthy outcome**: thesis v1 (DRAFT) → v2 (REJECTED) with specific challenges and a do-nothing case; genealogy row logged. The desk's first decision was an evidence-insufficient abstention, which the experiment design explicitly rewards.
 
+## 2026-07-17 — Stage 2 decisions (human-confirmed at kickoff)
+
+**Backups: R2/restic → Obsidian sync + Google Drive/rclone.** The original plan (restic → Cloudflare R2) is replaced per STAGE_2_KICKOFF: the Obsidian vault (packets, notes) is offsite-replicated by Obsidian sync; the database gets nightly `pg_dump | gzip` → local rolling dir → `rclone copy` of the sealed dump to Google Drive (API copy of a finished file, never a live-sync of the data dir). Git → private GitHub repo (human-confirmed; offsite code mirror trumps the general GitHub-migration direction for this purpose). CLAUDE.md environment section updated accordingly. Optimal backup architecture (retention, second provider, encryption-at-rest, frequency) is an explicit **deferred decision** re-opened at the pre-live gate.
+
+**`price_bars` table: build it (migration 002).** Stage 2 is the trigger Stage 1 anticipated. Read-through cache only: every row carries `source_doc_hash` referencing the immutable Tiingo document; the rebuild rule is deterministic (per symbol, latest-ingested document wins wholesale, parsed by the same `parse_bars` function the adapter uses); a test proves `TRUNCATE` + rebuild is bit-identical. Never a second source of truth.
+
+**Forced liquidation: `OrderStatus.FORCED_LIQUIDATION` (narrow invariant-6 exception).** The §6 quarantine timeout fallback force-liquidates without human approval by the spec's own deterministic rule. Represented as a system-generated Order in status FORCED_LIQUIDATION referencing the DataIncident (`decision_packet_doc_id` unused; `human_rationale` NULL). This is the only code path that creates an order without the human gate; the compensating control is the `contains_forced_resolution` taint flag on every affected NAV row from the forced fill onward (**taint-forward rule**).
+
+**Ledger conventions.** Lot selection: **FIFO**; a partial close splits the lot (closed portion becomes its own row sharing `opening_trade_id`). Wash-sale *candidate* = repurchase within ±30 calendar days of a realized-loss close. Dividends credit cash on **ex-date** (Tiingo reports `divCash` on ex-date; pay-date modeling deferred). Quarantine window `quarantine_resolution_window_days` is counted in **trading sessions**, not calendar days, so timeouts land deterministically on a session.
+
+**Engine determinism architecture.** `simulate()` is a pure function (no DB/clock/randomness inside `analytics/engine/`; a purity lint test enforces it); replay inputs are an explicit `ReplayManifest` (stored in `simulation_runs`); human quarantine resolutions are HUMAN-provenance assertions and therefore replay *inputs*. Sizing (floats/sklearn permitted) runs at proposal time, upstream of the replay boundary. `equal_weight_sp500_proxy` control uses the RSP ETF as its proxy series.
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)

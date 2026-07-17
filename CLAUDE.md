@@ -109,8 +109,8 @@ Confirm at Stage 0 and record actuals in `docs/DECISIONS.md`:
 - Postgres: installed via apt during setup. **Decide and record** whether the project uses that system Postgres or a Docker-Compose Postgres container; the spec assumes Compose for portability — confirm before wiring connection strings.
 - Docker + Docker Compose v2 present; user in `docker` group.
 - `ufw` is active with SSH/3389/Samba allow-rules. Any service that must be reachable from another host needs an allow rule; localhost-bound Compose services do not.
-- Obsidian vault path: **confirm the actual path** before writing notes to it.
-- Cloudflare R2 available for offsite backup (restic).
+- Obsidian vault path: `/home/jared/obsidian-brain` (confirmed Stage 0); desk output goes to `TradingDesk/` at vault root. The vault is covered by Obsidian sync — decision packets and notes mirrored there are offsite-replicated by that mechanism.
+- Offsite DB backup: **Google Drive via `rclone`** (replaced the original Cloudflare R2/restic plan — see `docs/DECISIONS.md` and `docs/STAGE_2_KICKOFF.md`). Nightly `pg_dump | gzip` to a local dir on the 1TB card, then `rclone copy` of the sealed dump to the Drive remote; never live-sync the data dir. rclone config/token stays outside any LLM context. Code is covered by a private GitHub remote.
 
 ---
 
