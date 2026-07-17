@@ -6,10 +6,12 @@ dependencies = [
     "exchange-calendars>=4.13.2",
     "httpx>=0.28.1",
     "hypothesis>=6.156.6",
+    "numpy>=2.5.1",
     "psycopg[binary]>=3.3.4",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.0",
 ]
 
 [dependency-groups]
