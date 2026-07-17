@@ -141,6 +141,10 @@ def build_manifest(
         conn, Assertion,
         "type = 'HUMAN' AND value->>'kind' = 'quarantine_resolution' ORDER BY id",
     )
+    bar_pins = repo.fetch(
+        conn, Assertion,
+        "type = 'HUMAN' AND value->>'kind' = 'bar_pin' ORDER BY id",
+    )
     doc_hashes = [
         r[0] for r in conn.execute(
             "SELECT DISTINCT source_doc_hash FROM price_bars ORDER BY 1"
@@ -156,6 +160,7 @@ def build_manifest(
         session_start=session_start,
         session_end=session_end,
         initial_cash=str(cfg.initial_cash),
+        bar_pin_assertion_ids=tuple(a.id for a in bar_pins),
     )
 
 
@@ -204,14 +209,54 @@ def load_input(conn, manifest: ReplayManifest, cfg: EngineConfig) -> SimulationI
                 close_position=bool(v.get("close_position", False)),
             )
         )
+    bars = load_bar_matrix(conn)
+    bars = _apply_bar_pins(conn, bars, manifest.bar_pin_assertion_ids)
     return SimulationInput(
         experiment_id=manifest.experiment_id,
         sessions=clock.sessions_between(manifest.session_start, manifest.session_end),
-        bars=load_bar_matrix(conn),
+        bars=bars,
         approved_orders=tuple(sorted(orders, key=lambda o: (o.decided_at, o.order_id))),
         resolutions=tuple(resolutions),
         config=cfg,
     )
+
+
+def _apply_bar_pins(
+    conn, bars: dict[str, dict[date, Bar]], pin_assertion_ids: tuple[int, ...]
+) -> dict[str, dict[date, Bar]]:
+    """Overlay pinned documents' bars for sessions <= through_session (Stage 3
+
+    restatement resolution). The engine still sees one BarMatrix; the ledger's
+    history replays from the bars it actually filled on."""
+    if not pin_assertion_ids:
+        return bars
+    from data.adapters.tiingo import parse_bars as tiingo_parse
+    from schemas.models import Document
+
+    for aid in pin_assertion_ids:
+        assertion = repo.fetch_one(conn, Assertion, "id = %s", (aid,))
+        v = assertion.value
+        symbol = v["symbol"]
+        through = date.fromisoformat(v["through_session"])
+        pinned_doc = repo.fetch_one(
+            conn, Document, "content_hash = %s", (v["doc_hash_old"],)
+        )
+        if pinned_doc is None:
+            raise DeterminismBreach(f"bar_pin A{aid}: pinned document not found")
+        overlay = {
+            b.session: Bar(
+                session=b.session, open=b.open, high=b.high, low=b.low,
+                close=b.close, volume=b.volume, adj_open=b.adj_open,
+                adj_high=b.adj_high, adj_low=b.adj_low, adj_close=b.adj_close,
+                adj_volume=b.adj_volume, split_factor=b.split_factor,
+                div_cash=b.div_cash,
+            )
+            for b in tiingo_parse(pinned_doc, symbol) if b.session <= through
+        }
+        merged = dict(bars.get(symbol, {}))
+        merged.update(overlay)
+        bars = {**bars, symbol: merged}
+    return bars
 
 
 # --------------------------------------------------------------------------- #

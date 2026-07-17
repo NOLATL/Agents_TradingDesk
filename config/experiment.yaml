@@ -74,9 +74,36 @@ engine:
   controls:
     spy_symbol: SPY
     ewp_symbol: RSP                         # equal-weight S&P proxy ETF (DECISIONS.md)
-    momentum_universe: [ETN, GEV, HUBB, PWR, NVT]   # lab universe; widens in Stage 3
-    momentum_top_n: 3                       # top-N for the lab universe (10 when universe widens)
+    # FROZEN AT GENESIS 2026-07-20 (human-confirmed): 15 names / 3 themes.
+    # Widening after genesis = new experiment id (benchmark comparability).
+    momentum_universe: [ETN, GEV, HUBB, PWR, NVT,
+                        CEG, VST, ETR, PEG, DUK,
+                        DHI, LEN, PHM, INVH, AMH]
+    momentum_top_n: 10                      # Decision Register #7
+    basket: [ETN, GEV, HUBB, PWR, NVT]      # same-basket-no-llm-timing control (active theme)
     benchmark_rebalance_sessions: 21        # ~monthly
   cluster_risk:
     correlation_threshold: 0.6              # Ledoit-Wolf-shrunk corr above this = same cluster
     risk_share_per_theme: "0.25"            # fixed share of portfolio risk per theme/cluster
+
+# Stage 3 forward paper workflow (live run).
+stage3:
+  genesis_date: "2026-07-20"               # go-live Monday; live sim + controls start here
+  live_experiment: EXP-001
+  themes:
+    grid-constraint:                        # active at genesis
+      symbols: [ETN, GEV, HUBB, PWR, NVT]
+      active: true
+    nuclear-renaissance:                    # enters rotation once the cycle is stable
+      symbols: [CEG, VST, ETR, PEG, DUK]
+      active: false
+    housing-rental-pivot:
+      symbols: [DHI, LEN, PHM, INVH, AMH]
+      active: false
+  alerts:
+    provider: ntfy                          # topic in .env (NTFY_TOPIC), never in git
+    base_url: https://ntfy.sh
+  schedule:
+    daily_monitor: "23:00 America/New_York (post-close; Tiingo composite final)"
+    weekly_research: "Sat 09:00 America/New_York"
+    backup: "02:30 local (after the monitor)"

@@ -280,6 +280,11 @@ class ReplayManifest:
     session_start: date
     session_end: date
     initial_cash: str                              # Decimal as str (JSON-safe)
+    # Stage 3: HUMAN bar-pin assertions (kind='bar_pin') — vendor-restatement
+    # resolutions. load_input overlays the pinned document's bars for sessions
+    # <= through_session, so the ledger's history replays from the bars it
+    # actually filled on. Fills are historical facts; never restated.
+    bar_pin_assertion_ids: tuple[int, ...] = ()
 
 
 @dataclass

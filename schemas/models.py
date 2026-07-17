@@ -392,6 +392,22 @@ class SimulationRun(DeskModel):
     created_at: datetime
 
 
+class CycleLog(DeskModel):
+    """Stage 3 cycle idempotency claim + crash-resume checkpoint. Outcomes
+
+    live in domain tables; this row answers 'did this period's cycle run'."""
+
+    id: int | None = None
+    cycle_type: str      # daily | weekly | event (SQL CHECK)
+    period_key: str      # session date / ISO week / trigger key; UNIQUE with type
+    trigger: str
+    status: str          # RUNNING | COMPLETE | FAILED (SQL CHECK)
+    phase: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    error: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Table registry for round-trip tests
 # --------------------------------------------------------------------------- #
@@ -416,4 +432,5 @@ TABLE_MODELS: dict[str, type[DeskModel]] = {
     "research_genealogy": ResearchGenealogy,
     "price_bars": PriceBar,
     "simulation_runs": SimulationRun,
+    "cycle_log": CycleLog,
 }

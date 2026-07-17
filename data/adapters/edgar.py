@@ -103,10 +103,26 @@ def ingest_company(conn, symbol: str, cik: str) -> list[tuple[Document, bool]]:
     return results
 
 
+def active_theme_symbols() -> list[str]:
+    """Filings are ingested for ACTIVE themes' symbols (stage3 config);
+
+    falls back to the Stage 1 slice universe when stage3 is absent."""
+    from config.loader import CONFIG
+
+    themes = CONFIG.get("stage3", {}).get("themes")
+    if not themes:
+        return list(SLICE["symbols"])
+    out: list[str] = []
+    for theme in sorted(themes):
+        if themes[theme].get("active"):
+            out.extend(themes[theme]["symbols"])
+    return sorted(set(out))
+
+
 def ingest_all() -> dict[str, int]:
     counts = {}
     with connect() as conn:
-        ciks = resolve_ciks(conn, SLICE["symbols"])
+        ciks = resolve_ciks(conn, active_theme_symbols())
         for symbol, cik in ciks.items():
             docs = ingest_company(conn, symbol, cik)
             counts[symbol] = sum(1 for _, fetched in docs if fetched)

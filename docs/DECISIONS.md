@@ -77,6 +77,22 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 - **Benchmark symbols:** SPY + RSP ingested via the Tiingo adapter alongside the slice symbols; all four controls run forward on real data (134 sessions) with bit-identical replay.
 - **Slippage config:** conservative starter tiers — 10 bps default, 20 bps ≥ 0.40 annualized vol, 35 bps ≥ 0.60. Calibration against observed opens is Stage 3 work.
 
+## 2026-07-17 — Stage 3 decisions (human-confirmed at kickoff)
+
+**Alerts: ntfy.sh.** Private generated topic in `.env` (`NTFY_TOPIC`), never in git or LLM context beyond the local process. Self-hostable on the tailnet later with only a base_url config change.
+
+**Universe frozen at genesis (2026-07-20): 15 names / 3 themes** — grid ETN GEV HUBB PWR NVT · nuclear CEG VST ETR PEG DUK · housing DHI LEN PHM INVH AMH; `momentum_top_n=10`. Frozen because the universe sits inside `EngineConfig` → config hash → benchmark history; widening after genesis = new experiment id. Research starts grid-only; candidate themes may enter *research* rotation later (config/data, not engine change).
+
+**Offsite backups: RENEWED DEFERRAL (human sign-off at Stage 3 kickoff).** The rclone/Drive and GitHub auth steps remain open through Stage 3; local nightly dumps + passing restore test are the operative backup. Recorded explicitly against Gate C's backup checkbox per the kickoff's deferral clause. Auth commands remain in STATUS.md.
+
+**Live-ledger architecture: genesis replay + prefix verification + incremental persist.** Every run re-simulates EXP-001 from genesis; persisted trades must be a prefix of the replay (compared on seq/symbol/side/qty/price/slippage/tag/session/exit_type/forced); only suffix trades append; previously-persisted lots are UPDATED when later sells close them; NAV/benchmarks/snapshots upsert. Prefix breach → halt + incident + alert; resolution is a HUMAN **bar_pin** assertion (pinned old document overlays sessions ≤ through_session via `bar_pin_assertion_ids` on the manifest). **Fills are historical facts; never restated.** Upstream guards: restatement diff on raw fields before adopting a new Tiingo doc (adj_* free to rescale — dividends legitimately rescale them), completeness gate before replay, Postgres advisory lock around ingest→persist.
+
+**Slippage calibration is report-only during EXP-001.** Tier bps enter historical fills under genesis replay; changing them mid-run rewrites history. Modeled-vs-observed comparison runs as a read-only report; an actual tier change happens only at an experiment boundary.
+
+**CAUSAL_BREAK is staged.** The milestone monitor's LLM only *reads* whether a falsification criterion occurred; human approval of the proposed liquidation is the confirmation event that flips the thesis to INVALIDATED and resolves forecasts (`forecast_resolution_effect`). A rejected read reverts the milestone with rationale. Protects calibration from LLM misreads; quarantine timeout remains the only unapproved order path.
+
+**Schedule:** daily monitor 23:00 ET (post-close, Tiingo composite final; backup timer 02:30 follows it), weekly research Sat 09:00 ET, human approval over the weekend, fills Monday open. Genesis Monday 2026-07-20. Quarantine window remains 5 trading sessions.
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)
