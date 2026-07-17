@@ -9,6 +9,7 @@ packet at thesis creation. The source notes reference price action — none of
 that is carried into this document's basket approach (§7 blinding).*
 
 - **strategy_tag:** `grid-constraint`
+- **Stage 1 slice data (recorded per STAGE_1_KICKOFF):** universe ETN, GEV, HUBB, PWR, NVT (human-confirmed); FRED series `IPUTIL`, `CAPUTLG2211S`, `INDPRO`; EDGAR forms 10-K/10-Q/8-K; prices via Tiingo (see DECISIONS.md — Stooq replaced 2026-07-17).
 - **Contamination assessment:** Forward-unresolved. Whether the equipment/labor
   crunch persists through 2027–2028 is genuinely undecided; the model's training
   data knows the 2024–25 narrative, so forecasts are deliberately anchored to
