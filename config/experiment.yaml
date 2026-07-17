@@ -102,7 +102,10 @@ stage3:
       active: false
   alerts:
     provider: ntfy                          # topic in .env (NTFY_TOPIC), never in git
-    base_url: https://ntfy.sh
+    # Self-hosted on the tailnet (ops/compose.ntfy.yaml + tailscale serve 8444).
+    # iOS instant push relays a content-free poll signal via ntfy.sh
+    # (NTFY_UPSTREAM_BASE_URL); message content never leaves this box.
+    base_url: https://framework.taila4cc29.ts.net:8444
   schedule:
     daily_monitor: "23:00 America/New_York (post-close; Tiingo composite final)"
     weekly_research: "Sat 09:00 America/New_York"

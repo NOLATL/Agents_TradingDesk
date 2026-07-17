@@ -81,6 +81,8 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 
 **Alerts: ntfy.sh.** Private generated topic in `.env` (`NTFY_TOPIC`), never in git or LLM context beyond the local process. Self-hostable on the tailnet later with only a base_url config change.
 
+**Update (same day, human-requested): ntfy is now self-hosted.** Container via `ops/compose.ntfy.yaml` (project `ntfy`, restart unless-stopped, localhost:2586) exposed tailnet-only as `https://framework.taila4cc29.ts.net:8444` via `tailscale serve` (443/8443 were already in use by other services). `NTFY_UPSTREAM_BASE_URL=https://ntfy.sh` keeps iOS instant push working — only a content-free poll signal transits ntfy.sh; alert content stays on the Framework. Android delivery is fully local. Reachability is gated by tailnet membership; topic name remains the second factor.
+
 **Universe frozen at genesis (2026-07-20): 15 names / 3 themes** — grid ETN GEV HUBB PWR NVT · nuclear CEG VST ETR PEG DUK · housing DHI LEN PHM INVH AMH; `momentum_top_n=10`. Frozen because the universe sits inside `EngineConfig` → config hash → benchmark history; widening after genesis = new experiment id. Research starts grid-only; candidate themes may enter *research* rotation later (config/data, not engine change).
 
 **Offsite backups: RENEWED DEFERRAL (human sign-off at Stage 3 kickoff).** The rclone/Drive and GitHub auth steps remain open through Stage 3; local nightly dumps + passing restore test are the operative backup. Recorded explicitly against Gate C's backup checkbox per the kickoff's deferral clause. Auth commands remain in STATUS.md.

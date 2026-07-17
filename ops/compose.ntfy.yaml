@@ -1,0 +1,24 @@
+# Self-hosted ntfy (alerts relay) — tailnet-only via tailscale serve.
+#   docker compose -f ops/compose.ntfy.yaml -p ntfy up -d
+#   tailscale serve --bg --https=8444 http://127.0.0.1:2586
+# Phone subscribes to the SAME topic on https://framework.taila4cc29.ts.net:8444.
+# upstream-base-url keeps iOS instant push working (only a poll signal transits
+# ntfy.sh; message CONTENT stays on this box — Android doesn't use it at all).
+services:
+  ntfy:
+    image: binwiederhier/ntfy
+    command: serve
+    environment:
+      NTFY_BASE_URL: https://framework.taila4cc29.ts.net:8444
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_CACHE_DURATION: 24h
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+    ports:
+      - "127.0.0.1:2586:80"
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+    restart: unless-stopped
+
+volumes:
+  ntfy_cache:
