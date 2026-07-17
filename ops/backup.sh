@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/backups/trading-desk}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
-RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:trading-desk-backups}"
+RCLONE_REMOTE="${RCLONE_REMOTE:-gdrive:Backups/Agents_TradingDesk/database}"
 RCLONE_BIN="${RCLONE_BIN:-$HOME/.local/bin/rclone}"
 STAMP="$(date +%Y-%m-%d)"
 DUMP_FILE="$BACKUP_DIR/trading_desk_${STAMP}.sql.gz"

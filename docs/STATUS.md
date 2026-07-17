@@ -49,6 +49,8 @@ Pre-declared criteria frozen in `docs/EXPERIMENT_REGISTRY.md` (EXP-001): calibra
    `~/.local/bin/rclone config create gdrive drive scope=drive.file` (Drive backups) and
    `~/.local/bin/gh auth login --web --git-protocol https` then tell Claude to push the private repo. Until then backups are local-only (the script fails loudly on the missing remote, never silently).
 2. Review the Gate B evidence below and the DECISIONS.md Stage 2 entries.
+3. **Deferred backup follow-up — personal rclone client_id:** create a personal Google OAuth `client_id`/`client_secret` and reconfigure the `gdrive` remote to use it (`rclone config` → edit `gdrive` → set `client_id`/`client_secret`). rclone's built-in shared client_id is **being retired during 2026**; once it is, the shared-key remote stops authorizing and nightly offsite copies fail. Do this before the retirement, not after.
+4. **Deferred backup follow-up — GitHub repo mirror auth (still open):** `~/.local/bin/gh auth login --web --git-protocol https` remains unrun, so the private-repo code mirror is not yet pushing. Until it is done, code offsite = local git only. (Same auth step referenced in open item 1.)
 
 ## Gate B — Simulation Integrity (Stage 2 exit)
 
