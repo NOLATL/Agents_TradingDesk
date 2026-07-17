@@ -360,8 +360,12 @@ def macro_points(conn, clock: datetime, per_series: int = 12) -> list[MacroPoint
 # Packet assembly + the blinding boundary
 # --------------------------------------------------------------------------- #
 
-def collect(conn, experiment_id: int, clock: datetime) -> EvidencePacket:
-    symbols = SLICE["symbols"]
+def collect(
+    conn, experiment_id: int, clock: datetime,
+    symbols: list[str] | None = None, theme: str | None = None,
+) -> EvidencePacket:
+    symbols = symbols or SLICE["symbols"]
+    theme = theme or SLICE["theme"]
     all_claims: list[Claim] = []
     all_metrics: list[ComputedMetric] = []
     quarantined: list[ComputedMetric] = []
@@ -385,7 +389,7 @@ def collect(conn, experiment_id: int, clock: datetime) -> EvidencePacket:
     conn.commit()
 
     return EvidencePacket(
-        theme=SLICE["theme"],
+        theme=theme,
         experiment_id=experiment_id,
         simulation_clock=clock,
         symbols=symbols,

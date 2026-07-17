@@ -28,12 +28,12 @@ def ensure_experiment(conn) -> Experiment:
     return exp
 
 
-def run() -> list:
+def run(symbols: list[str] | None = None, theme: str | None = None) -> list:
     clock = datetime.now(timezone.utc)
     with connect() as conn:
         experiment = ensure_experiment(conn)
         print(f"[1/4] evidence collection (clock {clock.isoformat()}) …")
-        pkt = evidence.collect(conn, experiment.id, clock)
+        pkt = evidence.collect(conn, experiment.id, clock, symbols=symbols, theme=theme)
         print(f"      {len(pkt.claims)} claims, {len(pkt.metrics)} metrics,"
               f" {len(pkt.quarantined_metrics)} quarantined, {len(pkt.macro)} macro points")
         print("[2/4] analyst …")
