@@ -183,7 +183,7 @@ class PortfolioState:
 @dataclass(frozen=True)
 class TradeRow:
     trade_seq: int
-    order_id: int
+    order_id: int              # 0 for forced liquidations (persist synthesizes the order)
     symbol: str
     side: OrderSide
     qty: Decimal
@@ -192,6 +192,7 @@ class TradeRow:
     strategy_tag: str
     session: date
     exit_type: ExitType | None = None
+    forced: bool = False       # §6 timeout fallback — the narrow invariant-6 exception
 
 
 @dataclass(frozen=True)
