@@ -51,6 +51,12 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 
 **No price_bars table.** Price observations are derived-on-read from immutably cached Tiingo JSON (`parse_bars`), not stored as rows — avoids a second source of truth for prices in Stage 1. Add a real table deliberately (migration 002 + this log) if Stage 2 analytics need indexed bars.
 
+## 2026-07-17 — Stage 1 slice run 1 lessons
+
+- **Unit-blind figure ratios are a real failure mode.** Run 1 produced GEV `revenue_share = 77.66` (segment revenue extracted in millions, total revenue in billions). Fix: ratios now require identical `figure_unit` on both figures plus plausibility bounds (share ≤ 1, backlog ≤ 20 years); violations raise a classified `INCONSISTENT` data_incident and skip the metric. The extractor prompt pins monetary figures to `USD_millions`. The reviewer had caught the inflation qualitatively — the deterministic layer now catches it structurally.
+- **The eligibility gate visibly worked**: FRED vintages ingested at ~13:07 UTC carried `first_eligible_decision_time` = same-day 13:30 UTC session open; the 13:26 UTC run correctly saw zero macro points. Not a bug — the anti-look-ahead guarantee behaving exactly as specified.
+- **Reviewer REJECT is a healthy outcome**: thesis v1 (DRAFT) → v2 (REJECTED) with specific challenges and a do-nothing case; genealogy row logged. The desk's first decision was an evidence-insufficient abstention, which the experiment design explicitly rewards.
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)
