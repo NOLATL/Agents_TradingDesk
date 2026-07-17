@@ -107,9 +107,13 @@ def latest_bars(conn, symbol: str) -> list[Bar]:
 
 
 def ingest_all() -> dict[str, bool]:
+    from config.loader import CONFIG
+
+    controls = CONFIG.get("engine", {}).get("controls", {})
+    benchmark_symbols = [s for s in (controls.get("spy_symbol"), controls.get("ewp_symbol")) if s]
     results = {}
     with connect() as conn:
-        for symbol in SLICE["symbols"]:
+        for symbol in SLICE["symbols"] + benchmark_symbols:
             _, fetched = ingest_symbol(conn, symbol)
             results[symbol] = fetched
         conn.commit()
