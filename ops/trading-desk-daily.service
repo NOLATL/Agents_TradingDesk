@@ -1,0 +1,8 @@
+# ln -sf ~/projects/Agents_TradingDesk/ops/trading-desk-daily.{service,timer} ~/.config/systemd/user/
+[Unit]
+Description=Trading desk daily monitor (ingest, genesis replay, milestones, report)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/Agents_TradingDesk
+ExecStart=%h/.local/bin/uv run python -m ops.daily_monitor

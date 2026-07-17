@@ -1,0 +1,7 @@
+[Unit]
+Description=Trading desk weekly research + proposal cycle
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/Agents_TradingDesk
+ExecStart=%h/.local/bin/uv run python -m ops.weekly_cycle

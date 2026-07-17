@@ -1,0 +1,10 @@
+[Unit]
+Description=Trading desk daily monitor at 23:00 ET (post-close, Tiingo final)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 23:00:00 America/New_York
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

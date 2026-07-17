@@ -1,0 +1,10 @@
+[Unit]
+Description=Trading desk weekly cycle, Saturday 09:00 ET
+
+[Timer]
+OnCalendar=Sat *-*-* 09:00:00 America/New_York
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

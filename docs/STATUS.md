@@ -17,7 +17,28 @@
 
 ## Current state
 
-- **Stage:** 2 — Deterministic Portfolio Laboratory — **COMPLETE, awaiting human review at Gate B**
+- **Stage:** 3 — Forward Paper Workflow — **BUILD COMPLETE; the experiment is armed. Genesis Monday 2026-07-20.**
+- The remaining Gate C work is elapsed time (8–12 clean weeks) + your weekly approvals; Gate D is evaluated at the end of the run against the pre-declared EXP-001 criteria.
+- **Timers live:** daily monitor Mon–Fri 23:00 ET → backup 02:30 → weekly research Sat 09:00 ET. Alerts: ntfy topic in `.env` (subscribe in the ntfy app — a test ping was sent 2026-07-17).
+- **Your weekly job:** when the "Approval needed" alert arrives, run `uv run python -m ops.approve` — the desk does nothing until you do. CAUSAL_BREAK approvals are the confirmation events that resolve forecasts.
+- 185 tests pass; Stage 2 replay suite untouched and green.
+
+## Gate C — Operational Integrity (running; code-provable items done)
+
+- [x] Restart/recovery + idempotency: cycle_log claims (COMPLETE→no-op, FAILED→resume from phase) proven live; duplicate live-runner run changes nothing (fixture + live re-run).
+- [x] Late/failed data never generates orders: completeness gate + finality guard halt before replay (fixture + live drill 2026-07-17: FAILED loudly at phase `ingest`, alert fired).
+- [x] The approval interrupt genuinely blocks: PROPOSED never fills; only CLI-approved orders fill at next open (fixture); FORCED_LIQUIDATION remains the sole documented exception.
+- [x] Milestone → CAUSAL_BREAK end to end: falsify → deterministic SELL proposals → approval resolves forecasts (FALSE, cause CAUSAL_BREAK, Brier computed) + basket liquidates; rejection reverts the milestone (fixtures).
+- [x] Restatement protection: guard pins restated docs (REVISION incident); prefix breach halts without persisting; bar-pin resolution path in the manifest.
+- [~] Backups: local nightly dump + passing restore test; **offsite = renewed human-signed deferral** (DECISIONS.md). Auth commands: `~/.local/bin/rclone config create gdrive drive scope=drive.file` · `~/.local/bin/gh auth login --web`.
+- [ ] Survived unattended (model down, network outage, source schema change, disk pressure, tz edges) — accumulates during the run; all failure paths alert loudly by construction.
+- [ ] **8–12 consecutive clean weeks** — clock starts at genesis 2026-07-20.
+
+## Gate D — Research Value (evaluate at end of run)
+
+Pre-declared criteria frozen in `docs/EXPERIMENT_REGISTRY.md` (EXP-001): calibration primary (≥60 resolved forecasts, Brier beats base-rate), same-basket + momentum controls, abstention quality, and the accepted null result. The momentum control's YTD run (+52% in the lab smoke) sets an honest, high bar.
+
+## Stage 2 (Gate B) — complete, human-reviewed 2026-07-17
 - **Gate:** B (checklist below). **Stage 3 (forward paper workflow) does not begin until the human reviews Stage 2.**
 - **Done:** pure-function simulator (`analytics/engine/`): FIFO ledger with wash-sale candidates, adverse-slippage fill model, corporate actions + MTM, quarantine state machine (both branches), four forward controls on identical costs, four breakers, cluster-risk-budgeting sizing with hard §8 caps, calibration metrics with the invariant-7 resolution authority. `price_bars` read-through cache (rebuild-proof), `simulation_runs` manifests, `FORCED_LIQUIDATION` order status (documented invariant-6 exception). Backups: nightly timer live, local dump + restore test passed. 190 tests pass.
 - **Headline evidence:** canonical-bytes replay is **bit-identical** — fixed scenarios, Hypothesis-generated scenarios, the full DB fixture path, and 134 real sessions over 7 symbols (result hash `cf77b02e…`). Same-manifest-different-result raises `DeterminismBreach`.
