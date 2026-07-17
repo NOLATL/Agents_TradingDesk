@@ -11,4 +11,4 @@ services:
     ports:
       - "127.0.0.1:55432:5432"
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql   # 18+ images store data in a subdir of this path
