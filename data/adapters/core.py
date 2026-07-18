@@ -30,6 +30,32 @@ def content_hash(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _secret_param_values(
+    params: dict[str, Any] | None,
+    stored_params: dict[str, Any] | None,
+) -> list[str]:
+    """Values present in the request params but not preserved verbatim in the
+    stored (scrubbed) copy — i.e. the secrets, per this module's contract.
+
+    If a caller passes no stored_params, nothing is treated as secret (the
+    caller has declared the whole request safe to persist).
+    """
+    if not params or stored_params is None:
+        return []
+    secrets = []
+    for key, val in params.items():
+        if stored_params.get(key) != val and val:
+            secrets.append(str(val))
+    return secrets
+
+
+def _redact(text: str, secret_values: list[str]) -> str:
+    for val in secret_values:
+        if val:
+            text = text.replace(val, "<redacted>")
+    return text
+
+
 def fetch_and_cache(
     conn,
     *,
@@ -60,7 +86,20 @@ def fetch_and_cache(
     contain a secret (e.g. FRED api_key), which must never enter the DB.
     """
     response = httpx.get(url, params=params, headers=headers, timeout=timeout)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # httpx puts the full request URL — api_key and all — into the exception
+        # message, which then reaches logs and the systemd journal in plaintext.
+        # The function's own contract already identifies the secrets: any param in
+        # `params` that `stored_params` omits or masks is secret by definition.
+        # Re-raise with those values redacted so the URL never leaks downstream.
+        secret_values = _secret_param_values(params, stored_params)
+        raise httpx.HTTPStatusError(
+            _redact(str(exc), secret_values),
+            request=exc.request,
+            response=exc.response,
+        ) from None
     raw = response.content
     h = content_hash(raw)
 
