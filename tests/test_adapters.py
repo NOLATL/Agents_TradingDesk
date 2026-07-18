@@ -178,3 +178,39 @@ def test_raise_incident_writes_classified_row(conn):
         )
         assert incident.id is not None
         raise psycopg.Rollback
+
+
+# --------------------------------------------------------------------------- #
+# FRED vintage date (regression: 2026-07-17 daily-monitor failure)
+# --------------------------------------------------------------------------- #
+
+def test_fred_vintage_date_never_leads_freds_own_date():
+    """FRED rejects realtime_start after its own calendar date.
+
+    The vintage date used to come from UTC, so the 23:00 America/New_York
+    monitor asked for tomorrow's vintage (UTC had already rolled over) and FRED
+    returned 400 every weeknight. Anchor to FRED's timezone instead.
+    """
+    from zoneinfo import ZoneInfo
+
+    from data.adapters.fred import FRED_TZ
+
+    # The two schedule times that actually matter, plus the awkward Eastern hour
+    # where Eastern leads Central and the codebase's usual XNYS convention would
+    # still have failed.
+    moments = [
+        datetime(2026, 7, 17, 23, 0, tzinfo=ZoneInfo("America/New_York")),  # EDT monitor
+        datetime(2026, 1, 15, 23, 0, tzinfo=ZoneInfo("America/New_York")),  # EST monitor
+        datetime(2026, 7, 18, 0, 30, tzinfo=ZoneInfo("America/New_York")),  # ET a day ahead of CT
+        datetime(2026, 7, 18, 9, 0, tzinfo=ZoneInfo("America/New_York")),   # weekly cycle
+    ]
+    for moment in moments:
+        vintage = moment.astimezone(FRED_TZ).date()
+        freds_today = moment.astimezone(ZoneInfo("America/Chicago")).date()
+        assert vintage <= freds_today, (
+            f"at {moment.isoformat()} the vintage date {vintage} leads FRED's "
+            f"own date {freds_today}; FRED would return 400"
+        )
+        # And the old UTC derivation is what this test exists to prevent.
+        if moment.hour >= 19:
+            assert moment.astimezone(timezone.utc).date() > freds_today
