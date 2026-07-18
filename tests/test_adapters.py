@@ -214,3 +214,51 @@ def test_fred_vintage_date_never_leads_freds_own_date():
         # And the old UTC derivation is what this test exists to prevent.
         if moment.hour >= 19:
             assert moment.astimezone(timezone.utc).date() > freds_today
+
+
+# --------------------------------------------------------------------------- #
+# Secret redaction in HTTP error paths (regression: FRED api_key in the journal)
+# --------------------------------------------------------------------------- #
+
+def test_secret_param_values_identifies_the_key():
+    params = {"series_id": "IPUTIL", "api_key": "SECRET123", "file_type": "json"}
+    stored = {"series_id": "IPUTIL", "file_type": "json"}  # api_key omitted
+    assert core._secret_param_values(params, stored) == ["SECRET123"]
+
+
+def test_secret_param_values_empty_when_nothing_scrubbed():
+    params = {"series_id": "IPUTIL"}
+    assert core._secret_param_values(params, params) == []
+    assert core._secret_param_values(params, None) == []
+
+
+def test_redact_removes_every_secret_occurrence():
+    msg = "GET https://x/y?api_key=SECRET123 failed; url api_key=SECRET123"
+    out = core._redact(msg, ["SECRET123"])
+    assert "SECRET123" not in out
+    assert out.count("<redacted>") == 2
+
+
+def test_fetch_and_cache_redacts_key_on_http_error(monkeypatch):
+    """A 400 must not carry the api_key into the exception text (which reaches
+    logs and the systemd journal)."""
+    import httpx
+
+    KEY = "TOPSECRETKEY"
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {"series_id": "IPUTIL", "api_key": KEY, "file_type": "json"}
+    stored = {k: v for k, v in params.items() if k != "api_key"}
+
+    def fake_get(u, params=None, headers=None, timeout=None):
+        req = httpx.Request("GET", httpx.URL(u, params=params))  # URL carries the key
+        return httpx.Response(400, request=req, text="Bad Request")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(httpx.HTTPStatusError) as ei:
+        core.fetch_and_cache(
+            conn=None, url=url, params=params, stored_params=stored,
+            source_name="fred", license_note="test",
+        )
+    assert KEY not in str(ei.value)
+    assert "<redacted>" in str(ei.value)
