@@ -9,10 +9,12 @@ start and every source read goes through the eligibility gate.
 from datetime import datetime, timezone
 
 from agents.roles import analyst, evidence, reporter, reviewer
+from agents.state import EvidencePacket
 from data import repository as repo
 from data.db import connect
 from reporting import packet as packet_renderer
-from schemas.models import Experiment
+from schemas.enums import ProvenanceType
+from schemas.models import Assertion, Experiment, Thesis
 
 
 def ensure_experiment(conn) -> Experiment:
@@ -26,6 +28,36 @@ def ensure_experiment(conn) -> Experiment:
         repo.insert(conn, exp)
         conn.commit()
     return exp
+
+
+def write_packet_manifest(
+    conn, pkt: EvidencePacket, thesis_v1: Thesis, thesis_v2: Thesis,
+    clock: datetime, commit: bool = True,
+) -> int:
+    """COMPUTED index of this dive's evidence assertion ids, keyed to the
+    surviving thesis version — the deep-dive renderer rehydrates from it
+    exactly (its fallback is a timestamp/id-window closure)."""
+    manifest = Assertion(
+        type=ProvenanceType.COMPUTED,
+        value={
+            "kind": "evidence_packet_manifest",
+            "thesis_id": thesis_v2.id,
+            "thesis_v1_id": thesis_v1.id,
+            "claim_assertion_ids": [c.assertion_id for c in pkt.claims],
+            "metric_assertion_ids": [
+                m.assertion_id
+                for m in pkt.metrics + pkt.quarantined_metrics
+            ],
+            "macro_assertion_ids": [p.assertion_id for p in pkt.macro],
+        },
+        function_name="agents.run_slice.packet_manifest",
+        code_version=evidence.code_version(),
+        created_at=clock,
+    )
+    repo.insert_assertion(conn, manifest)
+    if commit:
+        conn.commit()
+    return manifest.id
 
 
 def run(
@@ -52,6 +84,7 @@ def run(
         print("[3/4] reviewer …")
         thesis_v2, review_out = reviewer.review(conn, pkt, thesis_v1, analyst_out, clock)
         print(f"      verdict {review_out.verdict} → thesis v2 id={thesis_v2.id}")
+        write_packet_manifest(conn, pkt, thesis_v1, thesis_v2, clock)
         print("[4/4] reporter …")
         summary = reporter.summarize(conn, pkt, thesis_v2, analyst_out, review_out, clock)
         content = packet_renderer.render(
