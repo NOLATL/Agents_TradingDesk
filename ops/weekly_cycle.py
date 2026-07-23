@@ -138,6 +138,30 @@ def _rerender_daily(conn) -> None:
         print(f"daily re-render after weekly cycle failed: {e}", file=sys.stderr)
 
 
+def repair_missing_dives(conn, period_key: str) -> int:
+    """Backfill any deep-dive report file the cycle failed to write (crash
+    between run_slice's commit and deepdive.write left a REVIEWED/REJECTED
+    thesis with no artifact). Pure re-render of stored rows; idempotent."""
+    year, week = (int(p) for p in period_key.replace("W", "").split("-"))
+    start = date.fromisocalendar(year, week, 1)
+    end = date.fromisocalendar(year, week, 7)
+    n = 0
+    for thesis in repo.fetch(
+        conn, Thesis,
+        "status IN ('REVIEWED', 'REJECTED')"
+        " AND created_at >= %s AND created_at < %s + interval '1 day'"
+        " ORDER BY id", (start, end),
+    ):
+        if deepdive.expected_path(period_key, thesis.strategy_tag).exists():
+            continue
+        deepdive.write(conn, thesis, period_key,
+                       deepdive.latest_packet_path(thesis.strategy_tag))
+        print(f"repair render: deep dive {period_key}-{thesis.strategy_tag}"
+              f" (thesis #{thesis.id}) was missing — backfilled")
+        n += 1
+    return n
+
+
 def proposal_pass(conn) -> int:
     """Safety net: sized proposals for any ACTIVE thesis without orders,
     using that thesis's OWN packet (never the globally-latest one)."""
@@ -225,6 +249,8 @@ def main(trigger: str = "timer") -> None:
             if cycle_type == "weekly" and (survivors or rejected):
                 _rerender_daily(conn)
 
+            if cycle_type == "weekly":
+                repair_missing_dives(conn, period_key)
             render_weekly(conn, period_key)
             mark(conn, cycle, "report", status="COMPLETE")
             print(f"{cycle_type} cycle {period_key} COMPLETE: "
