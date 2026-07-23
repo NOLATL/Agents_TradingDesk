@@ -83,7 +83,8 @@ def cache_packet(conn, packet_path: str, now: datetime) -> int:
 
 
 def build_proposals(
-    conn, thesis: Thesis, as_of: date, packet_doc_id: int | None = None
+    conn, thesis: Thesis, as_of: date, packet_doc_id: int | None = None,
+    commit: bool = True,
 ) -> list[Order]:
     """Sized PROPOSED orders for an ACTIVE thesis. Idempotent: skips if any
 
@@ -154,5 +155,6 @@ def build_proposals(
         )
         repo.insert(conn, order)
         orders.append(order)
-    conn.commit()
+    if commit:
+        conn.commit()
     return orders

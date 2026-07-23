@@ -31,6 +31,19 @@ MOMENTUM_LOOKBACK_SESSIONS = 252
 MOMENTUM_MIN_SESSIONS = 40
 
 
+def _activated(activations: tuple[tuple[str, date], ...], symbol: str,
+               session: date) -> bool:
+    """Point-in-time gate: with no activation records (pre-unfreeze configs)
+    every symbol is active; a listed symbol is active from its date onward;
+    an unlisted symbol stays active (activation only ever restricts)."""
+    if not activations:
+        return True
+    for s, activated in activations:
+        if s == symbol:
+            return activated <= session
+    return True
+
+
 @dataclass(frozen=True)
 class BenchmarkState:
     name: str
@@ -107,10 +120,17 @@ def step_benchmark(
     elif name == "equal_weight_sp500_proxy":
         targets, cadence = [cfg.ewp_symbol], None
     elif name == "momentum_top10":
-        targets = _momentum_ranking(cfg.momentum_universe, session, bars, cfg.momentum_top_n)
+        universe = tuple(
+            s for s in cfg.momentum_universe
+            if _activated(cfg.universe_activations, s, session)
+        )
+        targets = _momentum_ranking(universe, session, bars, cfg.momentum_top_n)
         cadence = cfg.benchmark_rebalance_sessions
     elif name == "same_basket_no_llm_timing":
-        targets, cadence = list(cfg.basket), cfg.benchmark_rebalance_sessions
+        targets = [
+            s for s in cfg.basket if _activated(cfg.basket_activations, s, session)
+        ]
+        cadence = cfg.benchmark_rebalance_sessions
     else:
         raise ValueError(f"unknown benchmark {name}")
 

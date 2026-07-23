@@ -60,10 +60,13 @@ class ResolutionCause(StrEnum):
 
 class ThesisStatus(StrEnum):
     DRAFT = "DRAFT"                # analyst output, pre-review
-    ACTIVE = "ACTIVE"              # reviewed, live
+    ACTIVE = "ACTIVE"              # user-accepted, live
     INVALIDATED = "INVALIDATED"    # CAUSAL_BREAK
-    CLOSED = "CLOSED"              # TIME_STOP / horizon complete
+    CLOSED = "CLOSED"              # TIME_STOP / horizon complete / user marked dead
     REJECTED = "REJECTED"          # never activated (research genealogy keeps it)
+    REVIEWED = "REVIEWED"          # reviewer-passed, awaiting the user's accept/reject
+    # REVIEWED is declared last to match Postgres enum sort order (ADD VALUE
+    # appends; migration 004) — test_enum_values_match compares in order.
 
 
 class OrderStatus(StrEnum):
@@ -91,6 +94,33 @@ class MilestoneStatus(StrEnum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
     FALSIFIED = "FALSIFIED"        # falsified milestone ⇒ CAUSAL_BREAK path
+
+
+class ThemeSource(StrEnum):
+    """Where a candidate theme came from — provenance for reporting only.
+
+    The source never creates a separate approval path (consolidation spec §2):
+    all three converge on the same accept/reject gate and the same daily cap.
+    """
+
+    AGENT = "AGENT"            # unified daily scout (exactly 1 candidate/session)
+    ECONOMICS = "ECONOMICS"    # absorbed economics research (historical/backfill rows only)
+    HUMAN = "HUMAN"            # user-proposed via ops/approve.py `theme propose`
+
+
+class ThemeStatus(StrEnum):
+    CANDIDATE = "CANDIDATE"    # in the visible queue, awaiting accept/reject
+    ACCEPTED = "ACCEPTED"      # takes that day's single acceptance slot
+    DEFERRED = "DEFERRED"      # undecided, rolled forward (resurface_on Monday)
+    CLOSED = "CLOSED"          # thread over (reject/thesis_rejected/dead); fresh proposal only
+
+
+class ThesisDailyVerdict(StrEnum):
+    """Daily monitoring verdict — a written NO_CHANGE, never an absent row."""
+
+    NO_CHANGE = "NO_CHANGE"
+    WATCH = "WATCH"                            # a chain link is weakening
+    REVERSAL_SUSPECTED = "REVERSAL_SUSPECTED"  # chain link compromised; escalated
 
 
 class AgentRole(StrEnum):
@@ -135,4 +165,7 @@ SQL_ENUM_NAMES: dict[type[StrEnum], str] = {
     AgentRole: "agent_role",
     IncidentClass: "incident_class",
     IncidentStatus: "incident_status",
+    ThemeSource: "theme_source",
+    ThemeStatus: "theme_status",
+    ThesisDailyVerdict: "thesis_daily_verdict",
 }

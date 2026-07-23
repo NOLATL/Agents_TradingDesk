@@ -130,9 +130,11 @@ def render(
     return "\n".join(lines)
 
 
-def write(content: str, clock: datetime) -> list[Path]:
+def write(content: str, clock: datetime, theme: str | None = None) -> list[Path]:
     stamp = clock.strftime("%Y-%m-%d")
-    name = f"decision-packet-{SLICE['theme']}-{stamp}.md"
+    # The filename carries the run's theme — the packet↔thesis linkage
+    # (approve._thesis_packet_doc_id) matches on it.
+    name = f"decision-packet-{theme or SLICE['theme']}-{stamp}.md"
     paths = []
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     local = OUTPUT_DIR / name

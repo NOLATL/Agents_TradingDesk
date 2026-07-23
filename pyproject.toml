@@ -3,6 +3,7 @@ name = "trading-desk"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "anthropic>=0.117.1",
     "exchange-calendars>=4.13.2",
     "httpx>=0.28.1",
     "hypothesis>=6.156.6",

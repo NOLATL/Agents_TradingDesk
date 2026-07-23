@@ -95,6 +95,151 @@ Starter theme + candidates are drawn from the human's `Agents_Economics` researc
 
 **Schedule:** daily monitor 23:00 ET (post-close, Tiingo composite final; backup timer 02:30 follows it), weekly research Sat 09:00 ET, human approval over the weekend, fills Monday open. Genesis Monday 2026-07-20. Quarantine window remains 5 trading sessions.
 
+## 2026-07-22 — Consolidation: unified theme pipeline + economics absorption (human-confirmed)
+
+The desk and Agents_Economics were consolidated into one pipeline per the
+human's consolidation spec. Four decisions the human confirmed explicitly:
+full absorption (not loose coupling), drop the universe freeze, decisions via
+an extended `ops/approve.py`, and migrate-then-retire the economics outputs.
+
+**Themes are first-class rows (migration 004).** `themes` /`theme_symbols` /
+`thesis_daily_status` tables + `theses.theme_id`; `slug` doubles as
+`strategy_tag`. Three sources (`AGENT` scout, `ECONOMICS` scout, `HUMAN`)
+converge on ONE intake queue with a **DB-enforced hard cap of one accepted
+theme per calendar day across all sources** (partial unique index on
+`accepted_on`). **Reject is terminal** (theme CLOSED, `user_rejected`);
+**UNDECIDED candidates are what roll forward** — the nightly queue roll
+(migration 005 `queued_on`; `roll_theme_queue`) defers candidates the human
+passed over and resurfaces them Monday, so deciding nothing never kills a
+theme and only an explicit reject does. *(Corrected same day at the human's
+clarification — the first cut had reject itself deferring.)* A rejected
+thesis (or `dead`) likewise CLOSEs the thread; re-entry is only a fresh
+proposal.
+
+**Universe freeze RETIRED (supersedes 2026-07-17 "frozen at genesis").**
+Membership is now dated, not frozen: `theme_symbols.activation_session` +
+`universe_activations`/`basket_activations` in `EngineConfig`
+(`data/universe.py`). A symbol enters the momentum universe/basket only from
+its activation session onward, so pre-activation benchmark history never
+restates — Gate B determinism holds without the freeze. EXP-001 continues
+(human choice); benchmark comparability is scoped to "point-in-time expanding
+universe". Backfill: all 15 genesis symbols activate 2026-07-20. The cutover
+also fixed the same-basket control bug (it held all 15 names instead of the
+5-name active-theme basket; the 2 pre-trade sessions of same_basket NAV
+restate — daily NAV and the other three controls verified bit-identical).
+
+**Reviewer no longer activates.** `ACTIVATE → REVIEWED`; only the human's
+`thesis accept` flips ACTIVE (and builds proposals from that thesis's own
+cached packet). Reviewer REJECT stays a quality pre-filter — the theme stays
+ACCEPTED and retries next Friday. Reviewer also copies milestones to v2 (they
+previously stranded on v1, silencing the monitor for any future ACTIVE thesis).
+
+**Weekly cycle moved Sat 09:00 → Fri 23:45 ET; per-theme deep dives.** One
+individual deep dive per accepted theme (never batched), each producing a
+`reporting/deepdive/` artifact referenced from the briefing.
+
+**Monitoring never silently quiet.** One `thesis_daily_status` row per ACTIVE
+thesis per session, always — NO_CHANGE is a written verdict. The absorbed
+economics hypothesis audit runs as a causal-chain integrity read
+(INTACT/WEAKENING/BROKEN → NO_CHANGE/WATCH/REVERSAL_SUSPECTED) inside
+`ops/milestone_monitor.py`. Post-trade REVERSAL escalates urgently and rides
+the existing staged CAUSAL_BREAK path. A missing row renders as MONITOR GAP.
+
+**`dead` is exclusively human.** `ops/approve.py dead <thesis_id>` proposes
+TIME_STOP unwinds (order gate confirms; forecasts → UNRESOLVED/MANUAL —
+invariant 7 intact); no positions → immediate close. The system never
+auto-unwinds or auto-retires; TIME_STOP approval is the confirmation event.
+
+**Economics absorbed (supersedes 2026-07-17 "does NOT absorb… after Gate B" —
+deliberate human override).** `research/` module: `candidate_scout` (≤1
+candidate/day per lens — ECONOMICS macro RSS+EDGAR trends, AGENT desk
+filing-language; DB index enforces the econ cap), `theme_brief` (nightly
+narrative per ACTIVE-thesis theme → vault `TradingDesk/research/themes/`),
+both running in the daily monitor's new `intake` phase (after `report`, so a
+research failure never costs the ledger or briefing input). **LLM stack
+(human-specified): Qwen generates, claude-sonnet-5 reviews**
+(`research/review_gate.py`, max 2 regenerations with critique fed back;
+failures publish nothing silently — rejected briefs carry a REVIEW FAILED
+banner, rejected proposals never enter the queue and alert). Anthropic spend
+logs to `data/llm_usage.jsonl`; ANTHROPIC_API_KEY copied from the econ .env
+(same precedent as the FRED key). Research narrative is never an assertion —
+Prime Directive and invariant 5 untouched (deep dives still re-derive
+everything with provenance).
+
+**Migration + retirement.** `ops/migrate_economics.py` moved 14 in-flight
+vault notes (7 concepts, 7 hypotheses/bets flagged `[in-flight bet]`) into
+the queue as backfilled CANDIDATEs — they trickle through the daily accept
+cap by design (human choice: no bulk exception). `fleet-economics*` timers
+disabled and removed from the hermes fleet generator; Agents_Economics repo
+archived with a pointer README; `Economics/` vault folder frozen as archive;
+econ `market.db` stays read-only (desk has Tiingo/FRED/Postgres). The daily
+briefing's Economics section was removed — the desk's daily report (now with
+theme queue, thesis decisions, monitoring lines, fills) is the single feed.
+
+## 2026-07-22 — Post-review hardening (three-agent code review of the consolidation)
+
+A parallel review of the three first-live seams (nightly intake, mid-run
+universe activation, Friday deep-dive cycle) found one blocker and several
+risks; all fixed same night, 229 tests green:
+
+- **EDGAR ingestion cut over to the DB** (the blocker): `active_theme_symbols`
+  read the superseded YAML theme list, so an accepted theme's symbols (the 6
+  defense names) would never get filings — Friday's dive would have run on an
+  empty evidence packet with no error. Now reads `theme_symbols` like Tiingo;
+  unmapped tickers skip with a warning instead of KeyError. Defense filings
+  backfilled same night (6 per company cached and eligible).
+- **Ingest + intake containment**: Tiingo/EDGAR ingest commit per symbol and
+  contain per-symbol failures (one bad ticker no longer discards the whole
+  night; failures ntfy loudly). The intake phase catches scout/brief crashes
+  (Ollama down, schema-invalid output) as high-priority notifications — the
+  ledger and report are already safe by then, and a FAILED daily cycle never
+  auto-retries, so research failures must not cost the cycle.
+- **Friday visibility**: a reviewer-REJECTED dive now still writes its
+  deep-dive artifact (banner + reviewer challenges, no accept footer), the
+  weekly notify always fires (including "nothing survived review" and no-op
+  Fridays), and the cycle re-renders the daily note afterward so Saturday's
+  06:15 briefing shows the new REVIEWED theses. Fixed the FAILED-path phase
+  overwrite that wiped per-theme resume markers (duplicate dives on rerun).
+- **Theme-scoped research config**: the evidence extractor's preference line
+  and segment figure are no longer grid-hardcoded (`segment_revenue_theme`,
+  legacy name still read); `fred.ingest_all` also pulls accepted themes'
+  `research_config.fred_series`. `directed-energy-procurement` got defense
+  emphasis terms + FDEFX (verified against the FRED API).
+- **Known accepted risks** (not changed): a missing bar for an active universe
+  symbol halts the run by design (no deactivation path — raise with the human
+  if a symbol goes permanently dark); the reviewer flagged the same-basket
+  restatement as a finding, but it is the documented one-time basket-bug fix
+  above, not a defect. The `num_ctx` option passed via Ollama's
+  OpenAI-compatible endpoint is likely ignored (server default applies) —
+  revisit if long contexts truncate.
+
+## 2026-07-23 — Unified mandatory daily scout (human-directed)
+
+- **Two lenses collapsed into one pass**: the ECONOMICS and AGENT scout
+  lenses merge into a single nightly `scout(conn)` whose context combines
+  the macro RSS flow (168h), the discovery-config EDGAR terms, and the
+  slice emphasis terms. New rows are tagged `AGENT` with
+  `source_ref=candidate_scout/unified`; `ECONOMICS` remains as historical
+  provenance on backfilled rows only, and the `one_econ_candidate_per_day`
+  index is now vestigial (harmless, left in place).
+- **The proposal is mandatory — zero is no longer a respectable answer**:
+  the human wants exactly one candidate theme per weekday (per session) in
+  the queue, regardless of how many prior themes were accepted. The scout
+  prompt requires one proposal even on quiet days (stating plainly where
+  evidence is thin, so the human can reject); `propose: false` is gone from
+  the schema. Every no-theme outcome besides an idempotent same-day re-run
+  raises (`ReviewRejected` / `ScoutError` on empty or duplicate slug) and
+  notifies at high priority — a missing candidate is a visible failure,
+  never a quiet outcome. The acceptance slot (invariant 9) is untouched:
+  it caps decisions, never proposals.
+- **Human proposals never block the scout**: the idempotency gate filters
+  `source <> 'HUMAN'`, so a same-day `theme propose` doesn't consume the
+  scout's daily slot.
+- **Report wording**: the daily note's empty-queue line now explains that
+  the report renders before intake, so the night's proposal lands in the
+  next morning's briefing (the old "(no candidates today)" read as if
+  generation had been skipped).
+
 ## Deferred ideas (noted, not built)
 
 - None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)

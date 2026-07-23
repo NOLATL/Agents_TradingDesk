@@ -75,8 +75,15 @@ def live_experiment(conn) -> Experiment:
     return exp
 
 
-def active_universe(cfg) -> list[str]:
-    return sorted(set(cfg.momentum_universe) | {cfg.spy_symbol, cfg.ewp_symbol})
+def active_universe(cfg, as_of: date | None = None) -> list[str]:
+    """Symbols the completeness gate requires bars for. Point-in-time when
+    the config carries activation records: a theme accepted yesterday must
+    not halt today's run because its symbols lack deep history."""
+    universe = set(cfg.momentum_universe)
+    if as_of is not None and cfg.universe_activations:
+        dated = dict(cfg.universe_activations)
+        universe = {s for s in universe if dated.get(s, as_of) <= as_of}
+    return sorted(universe | {cfg.spy_symbol, cfg.ewp_symbol})
 
 
 # --------------------------------------------------------------------------- #
@@ -376,12 +383,13 @@ def run(conn, as_of: date, commit: bool = True) -> LiveRunSummary:
     conn.execute("SELECT pg_advisory_lock(%s)", (ADVISORY_LOCK_KEY,))
     try:
         exp = live_experiment(conn)
-        cfg = persist.engine_config_from_yaml()
+        from data.universe import engine_config_from_db
+        cfg = engine_config_from_db(conn)
 
         if as_of < GENESIS:
             pins = restatement_guard(conn, exp.id, None)
             rebuild_price_bars(conn, pins or None)
-            completeness_gate(conn, active_universe(cfg), as_of)
+            completeness_gate(conn, active_universe(cfg, as_of), as_of)
             return LiveRunSummary(as_of, 0, 0, 0, cfg.initial_cash, False,
                                   tuple(sorted(pins)), dry_run=True)
 
@@ -390,7 +398,7 @@ def run(conn, as_of: date, commit: bool = True) -> LiveRunSummary:
         ).fetchone()[0]
         pins = restatement_guard(conn, exp.id, last_live)
         rebuild_price_bars(conn, pins or None)
-        completeness_gate(conn, active_universe(cfg), as_of)
+        completeness_gate(conn, active_universe(cfg, as_of), as_of)
 
         manifest = persist.build_manifest(conn, exp.id, GENESIS, as_of, cfg)
         result = simulate(persist.load_input(conn, manifest, cfg))

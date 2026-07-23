@@ -13,8 +13,8 @@ from datetime import datetime
 from agents import llm
 from agents.state import AnalystOutput, EvidencePacket, ReviewerOutput
 from data import repository as repo
-from schemas.enums import AgentRole, ProvenanceType, ThesisStatus
-from schemas.models import Assertion, Forecast, ResearchGenealogy, Thesis
+from schemas.enums import AgentRole, MilestoneStatus, ProvenanceType, ThesisStatus
+from schemas.models import Assertion, Forecast, Milestone, ResearchGenealogy, Thesis
 
 REVIEWER_SYSTEM_PROMPT = """You are the Independent Reviewer of a thematic equity research desk.
 You AUDIT a thesis you did not write. You are not a co-author and not a cheerleader —
@@ -74,11 +74,15 @@ def review(
     prompt_version = llm._sha(REVIEWER_SYSTEM_PROMPT)
 
     # Post-review version (v2) — v1 stays untouched (pre/post both persisted).
+    # ACTIVATE stops at REVIEWED: the user's `thesis accept` (ops/approve.py)
+    # is what flips a thesis ACTIVE — the reviewer is a quality pre-filter,
+    # never the acceptance decision (consolidation spec, 2026-07-22).
     thesis_v2 = Thesis(
         experiment_id=thesis_v1.experiment_id,
         title=thesis_v1.title,
         strategy_tag=thesis_v1.strategy_tag,
-        status=ThesisStatus.ACTIVE if output.verdict == "ACTIVATE" else ThesisStatus.REJECTED,
+        theme_id=thesis_v1.theme_id,
+        status=ThesisStatus.REVIEWED if output.verdict == "ACTIVATE" else ThesisStatus.REJECTED,
         version=thesis_v1.version + 1,
         parent_version_id=thesis_v1.id,
         causal_chain=thesis_v1.causal_chain,
@@ -125,6 +129,20 @@ def review(
                 created_by=AgentRole.INDEPENDENT_REVIEWER,
                 model_tag=model_tag,
                 prompt_version=prompt_version,
+                created_at=clock,
+            ),
+        )
+
+    # Milestones move with the surviving version too — the daily monitor reads
+    # milestones of the ACTIVE thesis; leaving them on v1 would silence it.
+    for m in repo.fetch(conn, Milestone, "thesis_id = %s", (thesis_v1.id,)):
+        repo.insert(
+            conn,
+            Milestone(
+                thesis_id=thesis_v2.id,
+                description=m.description,
+                falsification_criterion=m.falsification_criterion,
+                status=MilestoneStatus.PENDING,
                 created_at=clock,
             ),
         )

@@ -106,7 +106,18 @@ def parse_observations(doc: Document, series_id: str) -> list[Observation]:
 def ingest_all() -> dict[str, bool]:
     results = {}
     with connect() as conn:
-        for series in SLICE["fred_series"]:
+        # Accepted themes may carry their own macro series (research_config);
+        # macro_points silently skips anything never ingested, so the nightly
+        # pull must cover them alongside the slice defaults.
+        theme_series = [
+            s
+            for (rc,) in conn.execute(
+                "SELECT research_config FROM themes WHERE status = 'ACCEPTED'"
+                " AND research_config ? 'fred_series'"
+            )
+            for s in rc["fred_series"]
+        ]
+        for series in sorted(set(SLICE["fred_series"]) | set(theme_series)):
             _, fetched = ingest_series(conn, series)
             results[series] = fetched
         conn.commit()

@@ -10,6 +10,7 @@ see docs/DECISIONS.md):
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -110,14 +111,39 @@ def ingest_all() -> dict[str, bool]:
     from config.loader import CONFIG
 
     controls = CONFIG.get("engine", {}).get("controls", {})
-    universe = list(controls.get("momentum_universe", SLICE["symbols"]))
     benchmark_symbols = [s for s in (controls.get("spy_symbol"), controls.get("ewp_symbol")) if s]
     results = {}
     with connect() as conn:
+        # Themes tables are authoritative post-unfreeze (all activations, so a
+        # symbol activating next session has bars before its first gate check);
+        # YAML fallback covers a fresh DB that predates migration 004's backfill.
+        universe = [
+            r[0] for r in conn.execute("SELECT DISTINCT symbol FROM theme_symbols")
+        ]
+        if not universe:
+            universe = list(controls.get("momentum_universe", SLICE["symbols"]))
+        # Per-symbol commit + containment: one bad ticker (404, transient 5xx)
+        # must not discard every other symbol's documents for the night. A
+        # missing bar for an ACTIVE universe symbol still halts loudly at the
+        # completeness gate; SPY finality has its own guard.
+        failures: list[str] = []
         for symbol in sorted(set(universe + benchmark_symbols)):
-            _, fetched = ingest_symbol(conn, symbol)
-            results[symbol] = fetched
-        conn.commit()
+            try:
+                _, fetched = ingest_symbol(conn, symbol)
+                results[symbol] = fetched
+                conn.commit()
+            except Exception as e:  # noqa: BLE001
+                conn.rollback()
+                failures.append(symbol)
+                print(f"tiingo ingest FAILED for {symbol}: {e}", file=sys.stderr)
+        if failures:
+            from ops.alerts import notify
+            notify(
+                "Tiingo ingest failures",
+                f"{', '.join(failures)} failed to fetch — completeness gate"
+                " will halt if any is active in the universe",
+                priority="high", tags="warning",
+            )
     return results
 
 

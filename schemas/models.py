@@ -27,6 +27,9 @@ from schemas.enums import (
     OrderStatus,
     ProvenanceType,
     ResolutionCause,
+    ThemeSource,
+    ThemeStatus,
+    ThesisDailyVerdict,
     ThesisStatus,
 )
 
@@ -102,6 +105,72 @@ class Assertion(DeskModel):
 
 
 # --------------------------------------------------------------------------- #
+# Theme intake (consolidation spec §3 — migration 004)
+# --------------------------------------------------------------------------- #
+
+class Theme(DeskModel):
+    """A candidate/accepted theme in the unified intake queue.
+
+    All three sources (agent scout, absorbed economics research, user) converge
+    here; `slug` doubles as strategy_tag. The one-accept-per-day cap and the
+    one-econ-candidate-per-day self-limit are enforced by partial unique
+    indexes on accepted_on / proposed_on. CLOSED is terminal: an explicit
+    theme reject, a rejected thesis, or a dead thesis closes the thread;
+    re-entry is a new row. UNDECIDED candidates (not accepted, not rejected)
+    DEFER at end of day and resurface Monday — deciding nothing never kills
+    a theme, only an explicit reject does.
+    """
+
+    id: int | None = None
+    slug: str
+    title: str
+    description: str | None = None
+    source: ThemeSource
+    status: ThemeStatus = ThemeStatus.CANDIDATE
+    research_config: dict[str, Any]  # symbols, fred_series, rss_feeds, emphasis_terms
+    source_ref: str | None = None
+    backfilled: bool = False  # one-time migration rows, exempt from intake caps
+    proposed_on: date
+    queued_on: date  # last entered the visible queue (proposal or Monday resurface)
+    proposed_at: datetime
+    decided_at: datetime | None = None
+    accepted_on: date | None = None
+    resurface_on: date | None = None
+    rolled_forward_count: int = 0
+    closed_reason: str | None = None  # thesis_rejected | dead | user_closed
+    created_at: datetime
+
+
+class ThemeSymbol(DeskModel):
+    """Point-in-time universe membership: in-universe from activation_session
+
+    onward, so the genesis replay never restates pre-activation history.
+    """
+
+    id: int | None = None
+    theme_id: int
+    symbol: str
+    activation_session: date
+    created_at: datetime
+
+
+class ThesisDailyStatus(DeskModel):
+    """One row per ACTIVE thesis per session — monitoring never silently quiet.
+
+    NO_CHANGE is a written verdict; a missing row is a monitoring gap and the
+    daily report renders it loudly as one.
+    """
+
+    id: int | None = None
+    thesis_id: int
+    session_date: date
+    verdict: ThesisDailyVerdict
+    summary: str
+    post_trade: bool  # open position existed at check time
+    created_at: datetime
+
+
+# --------------------------------------------------------------------------- #
 # Theses, forecasts, milestones (§3.3, §5)
 # --------------------------------------------------------------------------- #
 
@@ -116,6 +185,7 @@ class Thesis(DeskModel):
     experiment_id: int
     title: str
     strategy_tag: str  # attribution key on every thesis/order/trade
+    theme_id: int | None = None  # intake-pipeline theme (migration 004); slug = strategy_tag
     status: ThesisStatus
     version: int = 1
     parent_version_id: int | None = None
@@ -413,6 +483,9 @@ class CycleLog(DeskModel):
 # --------------------------------------------------------------------------- #
 
 TABLE_MODELS: dict[str, type[DeskModel]] = {
+    "themes": Theme,
+    "theme_symbols": ThemeSymbol,
+    "thesis_daily_status": ThesisDailyStatus,
     "documents": Document,
     "extractions": Extraction,
     "assertions": Assertion,

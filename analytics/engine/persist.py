@@ -68,6 +68,14 @@ def code_commit() -> str:
 
 
 def engine_config_from_yaml() -> EngineConfig:
+    """Base config from YAML only — no universe gating, and basket falls back
+    to the whole momentum universe (the pre-unfreeze behavior; note it never
+    matched the 5-name active-theme basket the config comments described).
+    Production uses data.universe.engine_config_from_db, which overrides
+    momentum_universe/basket point-in-time from the themes tables; the YAML
+    momentum_universe key is genesis documentation from the 2026-07-22
+    cutover onward.
+    """
     e = CONFIG["engine"]
     return EngineConfig(
         initial_cash=Decimal(e["initial_cash"]),

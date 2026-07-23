@@ -40,7 +40,7 @@ Hard rules:
 
 
 def construct_thesis(
-    conn, packet: EvidencePacket, clock: datetime
+    conn, packet: EvidencePacket, clock: datetime, theme_id: int | None = None
 ) -> tuple[Thesis, AnalystOutput]:
     context = build_analyst_context(packet)  # blinding enforced here
     output = llm.structured_call(
@@ -66,7 +66,10 @@ def construct_thesis(
     thesis = Thesis(
         experiment_id=packet.experiment_id,
         title=f"{packet.theme}: {', '.join(packet.symbols)}",
-        strategy_tag=SLICE["strategy_tag"],
+        # The theme slug IS the strategy_tag (unified pipeline); the config
+        # slice tag remains only as the fallback for untagged ad-hoc runs.
+        strategy_tag=packet.theme or SLICE["strategy_tag"],
+        theme_id=theme_id,
         status=ThesisStatus.DRAFT,
         version=1,
         causal_chain=output.causal_chain,

@@ -67,6 +67,13 @@ class EngineConfig:
     momentum_top_n: int
     basket: tuple[str, ...]                       # same-basket-no-llm-timing control
     benchmark_rebalance_sessions: int             # fixed-cadence rebalance interval
+    # Point-in-time universe (2026-07-22 unfreeze): (symbol, activation session)
+    # pairs; a symbol enters the momentum universe / basket only from its date
+    # onward, so pre-activation benchmark history never restates as themes are
+    # accepted. Empty tuples = no gating (all symbols always active) — the
+    # pre-unfreeze behavior, kept for engine tests that build config directly.
+    universe_activations: tuple[tuple[str, date], ...] = ()
+    basket_activations: tuple[tuple[str, date], ...] = ()
 
 
 @dataclass(frozen=True)

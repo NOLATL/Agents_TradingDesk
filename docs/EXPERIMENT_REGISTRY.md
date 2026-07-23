@@ -16,6 +16,16 @@ config baseline it hashes.*
 
 - Current S&P 500 constituents, used **forward only**; refreshed on index changes going forward. No historical constituent reconstruction (anti-scope).
 - Basket construction blinded to price history (§7); any thesis whose basket cannot be justified without price history is flagged contamination Class 3 and excluded from performance claims.
+- **Amendment 2026-07-22 (human-confirmed, consolidation):** the genesis
+  freeze clause is retired. The tradeable/benchmark universe is
+  **point-in-time expanding** — membership is dated
+  (`theme_symbols.activation_session`, hashed into `EngineConfig` via
+  `universe_activations`), so accepting a theme widens the universe from its
+  activation session forward and pre-activation benchmark history never
+  restates. EXP-001 continues under this amendment; benchmark comparability
+  claims are scoped accordingly. The same cutover corrected the same-basket
+  control to the point-in-time accepted-theme basket (it had been holding the
+  full 15-name universe), restating 2 pre-trade sessions of that one series.
 
 ## Data snapshot approach
 

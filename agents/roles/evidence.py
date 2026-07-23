@@ -43,11 +43,11 @@ You extract factual claims from a single SEC filing excerpt.
 Rules:
 - Every claim MUST include a short verbatim quote copied exactly from the text (the citation span).
 - Extract only what the text states; never infer, interpret, rank, or recommend.
-- Prefer claims relevant to: electrical equipment and grid segments, backlog, data center demand,
+- Prefer claims relevant to the desk's current research focus ({focus}) plus: backlog,
   segment revenue and profit, capacity expansion, supply constraints, management outlook.
 - When a claim carries a number, set figure_name (snake_case), figure_value, figure_unit.
-  Useful figure_names: total_revenue_fy, segment_revenue_electrical, backlog_total,
-  eps_diluted_fy, operating_profit_total.
+  Useful figure_names: total_revenue_fy, segment_revenue_theme (revenue of the segment most
+  exposed to the research focus), backlog_total, eps_diluted_fy, operating_profit_total.
 - Express ALL monetary figures in figure_unit "USD_millions" (convert: $38.1 billion →
   figure_value 38100). Percentages use figure_unit "percent". Never mix units.
 - 5 to 15 claims per document. Ignore boilerplate, legal disclaimers, and risk-factor lists.
@@ -75,22 +75,26 @@ def is_price_contaminated(text: str) -> bool:
 # Extraction (LLM, one call per document, no tools)
 # --------------------------------------------------------------------------- #
 
-def extract_document(conn, doc: Document, symbol: str, experiment_id: int) -> list[Claim]:
+def extract_document(conn, doc: Document, symbol: str, experiment_id: int,
+                     emphasis_terms: list[str] | None = None) -> list[Claim]:
     text = strip_html(doc.raw_bytes.decode("utf-8", errors="replace"))
-    excerpt = relevant_excerpt(text, SLICE["emphasis_terms"])
+    excerpt = relevant_excerpt(text, emphasis_terms or SLICE["emphasis_terms"])
     if not excerpt:
         return []
     form = (doc.query_params or {}).get("form", "?")
+    system_prompt = EXTRACTOR_SYSTEM_PROMPT.format(
+        focus=", ".join(emphasis_terms or SLICE["emphasis_terms"])
+    )
     output = llm.structured_call(
         conn,
         role=AgentRole.EVIDENCE_COLLECTOR,
         experiment_id=experiment_id,
-        system_prompt=EXTRACTOR_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         user_prompt=f"Company: {symbol}. Filing form: {form}.\n\nExcerpt:\n{excerpt}",
         schema=ExtractionOutput,
     )
     claims: list[Claim] = []
-    prompt_version = llm._sha(EXTRACTOR_SYSTEM_PROMPT)
+    prompt_version = llm._sha(system_prompt)
     for c in output.claims:
         if c.quote not in text:
             continue  # citation must be verbatim; ungrounded quotes are dropped
@@ -211,12 +215,15 @@ def _figure_incident(conn, symbol: str, metric: str, numerator: Claim, denominat
 
 
 def compute_company_metrics(
-    conn, symbol: str, claims: list[Claim], filing_texts: list[str], clock: datetime
+    conn, symbol: str, claims: list[Claim], filing_texts: list[str], clock: datetime,
+    emphasis_terms: list[str] | None = None,
 ) -> list[ComputedMetric]:
     metrics: list[ComputedMetric] = []
     counts_total: dict[str, int] = {}
     for text in filing_texts:
-        for term, n in exposure.emphasis_count(text, SLICE["emphasis_terms"]).items():
+        for term, n in exposure.emphasis_count(
+            text, emphasis_terms or SLICE["emphasis_terms"]
+        ).items():
             counts_total[term] = counts_total.get(term, 0) + n
     metrics.append(
         _store_metric(
@@ -229,7 +236,9 @@ def compute_company_metrics(
 
     figures = {c.figure_name: c for c in claims if c.figure_name and c.figure_value}
     rev = figures.get("total_revenue_fy")
-    seg = figures.get("segment_revenue_electrical")
+    # New extractions use the theme-generic name; cached grid-era claims
+    # carry the legacy one.
+    seg = figures.get("segment_revenue_theme") or figures.get("segment_revenue_electrical")
     backlog = figures.get("backlog_total")
     revenue_share_value = None
     backlog_ratio_value = None
@@ -320,9 +329,10 @@ def compute_quarantined_metrics(conn, symbol: str, clock: datetime) -> list[Comp
 # Macro (deterministic parse of cached FRED vintages)
 # --------------------------------------------------------------------------- #
 
-def macro_points(conn, clock: datetime, per_series: int = 12) -> list[MacroPoint]:
+def macro_points(conn, clock: datetime, per_series: int = 12,
+                 fred_series: list[str] | None = None) -> list[MacroPoint]:
     points: list[MacroPoint] = []
-    for series in SLICE["fred_series"]:
+    for series in fred_series or SLICE["fred_series"]:
         docs = repo.eligible_documents(
             conn, clock, "source_name = 'fred' AND query_params->>'series_id' = %s", (series,)
         )
@@ -363,7 +373,11 @@ def macro_points(conn, clock: datetime, per_series: int = 12) -> list[MacroPoint
 def collect(
     conn, experiment_id: int, clock: datetime,
     symbols: list[str] | None = None, theme: str | None = None,
+    emphasis_terms: list[str] | None = None, fred_series: list[str] | None = None,
 ) -> EvidencePacket:
+    """Per-theme research config (emphasis_terms, fred_series) comes from the
+    theme's research_config in the unified pipeline; the YAML slice values
+    remain the defaults for ad-hoc runs."""
     symbols = symbols or SLICE["symbols"]
     theme = theme or SLICE["theme"]
     all_claims: list[Claim] = []
@@ -381,10 +395,14 @@ def collect(
         claims: list[Claim] = []
         texts: list[str] = []
         for doc in docs:
-            claims.extend(extract_document(conn, doc, symbol, experiment_id))
+            claims.extend(
+                extract_document(conn, doc, symbol, experiment_id, emphasis_terms)
+            )
             texts.append(strip_html(doc.raw_bytes.decode("utf-8", errors="replace")))
         all_claims.extend(claims)
-        all_metrics.extend(compute_company_metrics(conn, symbol, claims, texts, clock))
+        all_metrics.extend(
+            compute_company_metrics(conn, symbol, claims, texts, clock, emphasis_terms)
+        )
         quarantined.extend(compute_quarantined_metrics(conn, symbol, clock))
     conn.commit()
 
@@ -396,7 +414,7 @@ def collect(
         claims=all_claims,
         metrics=[m for m in all_metrics if not m.quarantined_from_analyst],
         quarantined_metrics=quarantined,
-        macro=macro_points(conn, clock),
+        macro=macro_points(conn, clock, fred_series=fred_series),
     )
 
 

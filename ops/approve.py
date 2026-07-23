@@ -1,20 +1,40 @@
-"""The invariant-6 human approval gate (CLI). No order reaches the engine
+"""The human decision gate (CLI) — every decision in the unified pipeline
+lands here (consolidation spec, DECISIONS.md 2026-07-22):
 
-without passing through here — the sole exception is the documented
-FORCED_LIQUIDATION quarantine-timeout path.
+- orders:  the invariant-6 approval gate. No order reaches the engine without
+  passing through here — the sole exception is the documented
+  FORCED_LIQUIDATION quarantine-timeout path. Approving a CAUSAL_BREAK
+  liquidation is the CONFIRMATION EVENT of a falsified milestone; approving a
+  TIME_STOP unwind is the confirmation event of a `dead` decision.
+- themes:  propose / accept / reject candidates from the unified intake queue.
+  HARD CAP: one accepted theme per calendar day (ET), across all sources —
+  checked here, enforced by the DB's partial unique index. Reject CLOSES the
+  thread (terminal); an UNDECIDED candidate defers at end of day and
+  resurfaces Monday — only an explicit reject kills a theme.
+- theses:  accept (REVIEWED → ACTIVE + sized proposals) or reject (thread
+  fully closed) a Friday deep-dive thesis.
+- dead:    the ONLY path that retires a thesis by human judgment. Proposes
+  TIME_STOP unwinds for open positions (forecasts → UNRESOLVED, never
+  TRUE/FALSE — invariant 7); with no positions it closes immediately.
 
-Approving a CAUSAL_BREAK liquidation is the CONFIRMATION EVENT of a falsified
-milestone: on approval the thesis flips INVALIDATED and its forecasts resolve
-deterministically (forecast_resolution_effect). Rejecting reverts the
-milestone to PENDING with your rationale (an LLM misread, corrected).
-
-    uv run python -m ops.approve            # interactive queue
-    uv run python -m ops.approve --list     # read-only view
+    uv run python -m ops.approve                      # interactive order queue
+    uv run python -m ops.approve --list               # read-only view
+    uv run python -m ops.approve theme list
+    uv run python -m ops.approve theme propose <slug> --title ... --symbols A,B
+    uv run python -m ops.approve theme accept <slug> [--rationale ...]
+    uv run python -m ops.approve theme reject <slug> --rationale ...
+    uv run python -m ops.approve thesis accept <id> [--rationale ...]
+    uv run python -m ops.approve thesis reject <id> --rationale ...
+    uv run python -m ops.approve dead <thesis_id> --rationale ...
 """
 
+import argparse
 import sys
-from datetime import datetime, timezone
+import textwrap
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
+from analytics.engine import clock
 from analytics.engine.metrics import forecast_resolution_effect
 from config.loader import CONFIG
 from data import repository as repo
@@ -23,11 +43,29 @@ from schemas.enums import (
     ExitType,
     ForecastOutcome,
     MilestoneStatus,
+    OrderSide,
     OrderStatus,
     ProvenanceType,
+    ThemeSource,
+    ThemeStatus,
     ThesisStatus,
 )
-from schemas.models import Assertion, Document, Forecast, Order, ResearchGenealogy, Thesis
+from schemas.models import (
+    Assertion,
+    Document,
+    Forecast,
+    Order,
+    ResearchGenealogy,
+    Theme,
+    ThemeSymbol,
+    Thesis,
+)
+
+ET = ZoneInfo("America/New_York")
+
+
+def today_et() -> date:
+    return datetime.now(ET).date()
 
 
 def pending_orders(conn) -> list[Order]:
@@ -92,6 +130,8 @@ def approve_order(conn, order_id: int, qty=None, rationale: str | None = None,
     )
     if order.exit_type is ExitType.CAUSAL_BREAK:
         _confirm_causal_break(conn, order, now)
+    if order.exit_type is ExitType.TIME_STOP:
+        _confirm_time_stop(conn, order, now)
     if commit:
         conn.commit()
     return repo.fetch_one(conn, Order, "id = %s", (order_id,))
@@ -116,6 +156,8 @@ def reject_order(conn, order_id: int, rationale: str, commit: bool = True) -> Or
     )
     if order.exit_type is ExitType.CAUSAL_BREAK:
         _revert_milestone(conn, order, rationale, now)
+    if order.exit_type is ExitType.TIME_STOP:
+        _revert_dead(conn, order, rationale, now)
     if commit:
         conn.commit()
     return repo.fetch_one(conn, Order, "id = %s", (order_id,))
@@ -183,11 +225,364 @@ def kill_thesis(conn, thesis_id: int, rationale: str, commit: bool = True) -> No
         conn.commit()
 
 
+# --------------------------------------------------------------------------- #
+# Theme intake decisions (unified pipeline, migration 004)
+# --------------------------------------------------------------------------- #
+
+class ThemeGateError(Exception):
+    pass
+
+
+def _theme(conn, slug: str) -> Theme:
+    theme = repo.fetch_one(conn, Theme, "slug = %s", (slug,))
+    if theme is None:
+        raise ThemeGateError(f"no theme with slug {slug!r} — see `theme list`")
+    return theme
+
+
+def accept_slot_used(conn, day: date) -> str | None:
+    """The slug that holds `day`'s single acceptance slot, if any."""
+    row = conn.execute(
+        "SELECT slug FROM themes WHERE accepted_on = %s", (day,)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def propose_theme(
+    conn, slug: str, title: str, symbols: list[str],
+    description: str | None = None, source: ThemeSource = ThemeSource.HUMAN,
+    source_ref: str = "human", research_config_extra: dict | None = None,
+    commit: bool = True,
+) -> Theme:
+    now = datetime.now(timezone.utc)
+    theme = Theme(
+        slug=slug, title=title, description=description, source=source,
+        status=ThemeStatus.CANDIDATE,
+        research_config={"symbols": symbols, **(research_config_extra or {})},
+        source_ref=source_ref, proposed_on=today_et(), queued_on=today_et(),
+        proposed_at=now, created_at=now,
+    )
+    repo.insert(conn, theme)
+    if commit:
+        conn.commit()
+    return theme
+
+
+def accept_theme(conn, slug: str, rationale: str | None = None,
+                 commit: bool = True) -> Theme:
+    """Take today's single acceptance slot. Symbols activate at the next
+    session, so ingestion has their bars before the first gate that needs
+    them; the theme joins this week's Friday deep-dive set."""
+    theme = _theme(conn, slug)
+    if theme.status not in (ThemeStatus.CANDIDATE, ThemeStatus.DEFERRED):
+        raise ThemeGateError(f"theme {slug} is {theme.status}, not decidable")
+    today = today_et()
+    holder = accept_slot_used(conn, today)
+    if holder is not None:
+        raise ThemeGateError(
+            f"today's acceptance slot is already used by {holder!r} — "
+            f"one accepted theme per day, across all sources (spec invariant 1)"
+        )
+    now = datetime.now(timezone.utc)
+    activation = clock.first_session_open_after(now)
+    conn.execute(
+        "UPDATE themes SET status = 'ACCEPTED', accepted_on = %s, decided_at = %s,"
+        " resurface_on = NULL WHERE id = %s",
+        (today, now, theme.id),
+    )
+    for symbol in theme.research_config.get("symbols", []):
+        conn.execute(
+            "INSERT INTO theme_symbols (theme_id, symbol, activation_session, created_at)"
+            " VALUES (%s, %s, %s, %s) ON CONFLICT (theme_id, symbol) DO NOTHING",
+            (theme.id, symbol, activation, now),
+        )
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "theme_accept", "theme_id": theme.id, "slug": slug,
+                   "accepted_on": str(today), "activation_session": str(activation)},
+            human_rationale=rationale or "accepted",
+            created_at=now,
+        ),
+    )
+    if commit:
+        conn.commit()
+    return repo.fetch_one(conn, Theme, "id = %s", (theme.id,))
+
+
+def _next_monday(day: date) -> date:
+    return day + timedelta(days=(7 - day.weekday()) % 7 or 7)
+
+
+def reject_theme(conn, slug: str, rationale: str, commit: bool = True) -> Theme:
+    """An explicit reject is TERMINAL: the thread closes and only a fresh
+    proposal re-creates the theme. (Undecided candidates are the ones that
+    roll forward — see roll_theme_queue.)"""
+    theme = _theme(conn, slug)
+    if theme.status not in (ThemeStatus.CANDIDATE, ThemeStatus.DEFERRED):
+        raise ThemeGateError(f"theme {slug} is {theme.status}, not decidable")
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        "UPDATE themes SET status = 'CLOSED', closed_reason = 'user_rejected',"
+        " decided_at = %s, resurface_on = NULL WHERE id = %s",
+        (now, theme.id),
+    )
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "theme_reject", "theme_id": theme.id, "slug": slug},
+            human_rationale=rationale, created_at=now,
+        ),
+    )
+    if commit:
+        conn.commit()
+    return repo.fetch_one(conn, Theme, "id = %s", (theme.id,))
+
+
+def roll_theme_queue(conn, session: date, commit: bool = True) -> tuple[int, int]:
+    """Nightly queue mechanics (called from the daily monitor's intake phase).
+
+    1. Due DEFERRED themes re-enter the queue (Mondays) with a fresh
+       queued_on, so tonight's defer pass leaves them alone.
+    2. Candidates the human passed over (queued before this session, still
+       undecided) DEFER and resurface next Monday. Deciding nothing never
+       kills a theme; only an explicit reject does.
+
+    Returns (resurfaced, deferred).
+    """
+    resurfaced = conn.execute(
+        "UPDATE themes SET status = 'CANDIDATE', queued_on = %s, resurface_on = NULL"
+        " WHERE status = 'DEFERRED' AND resurface_on <= %s",
+        (session, session),
+    ).rowcount
+    deferred = conn.execute(
+        "UPDATE themes SET status = 'DEFERRED', resurface_on = %s,"
+        " rolled_forward_count = rolled_forward_count + 1"
+        " WHERE status = 'CANDIDATE' AND queued_on < %s",
+        (_next_monday(session), session),
+    ).rowcount
+    if commit:
+        conn.commit()
+    return resurfaced, deferred
+
+
+def _close_theme(conn, theme_id: int | None, reason: str, now: datetime) -> None:
+    if theme_id is None:
+        return
+    conn.execute(
+        "UPDATE themes SET status = 'CLOSED', closed_reason = %s, decided_at = %s"
+        " WHERE id = %s AND status != 'CLOSED'", (reason, now, theme_id),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Thesis decisions (REVIEWED → user gate) and the `dead` path
+# --------------------------------------------------------------------------- #
+
+def _thesis_packet_doc_id(conn, thesis: Thesis) -> int | None:
+    """Newest cached decision packet for this thesis's theme — the evidence
+    the order gate shows must be the packet of THIS deep dive, not whichever
+    theme happened to run last."""
+    row = conn.execute(
+        "SELECT id FROM documents WHERE source_name = 'desk_packet'"
+        " AND retrieval_url LIKE %s ORDER BY ingestion_time DESC, id DESC LIMIT 1",
+        (f"%decision-packet-{thesis.strategy_tag}-%",),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def accept_thesis(conn, thesis_id: int, rationale: str | None = None,
+                  commit: bool = True) -> list[Order]:
+    """REVIEWED → ACTIVE, then sized proposals immediately (they still stop at
+    the order gate). Returns the proposed orders."""
+    from ops.proposal_builder import build_proposals
+
+    thesis = repo.fetch_one(conn, Thesis, "id = %s", (thesis_id,))
+    if thesis is None or thesis.status is not ThesisStatus.REVIEWED:
+        status = thesis.status if thesis else "missing"
+        raise ThemeGateError(f"thesis {thesis_id} is {status}, not REVIEWED")
+    now = datetime.now(timezone.utc)
+    conn.execute("UPDATE theses SET status = 'ACTIVE' WHERE id = %s", (thesis_id,))
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "thesis_accept", "thesis_id": thesis_id},
+            human_rationale=rationale or "accepted", created_at=now,
+        ),
+    )
+    thesis = repo.fetch_one(conn, Thesis, "id = %s", (thesis_id,))
+    orders = build_proposals(
+        conn, thesis, today_et(), _thesis_packet_doc_id(conn, thesis), commit=False
+    )
+    if commit:
+        conn.commit()
+    return orders
+
+
+def reject_thesis(conn, thesis_id: int, rationale: str, commit: bool = True) -> None:
+    """Thread fully closed: thesis REJECTED (genealogy row) + theme CLOSED.
+    The theme only comes back if a source proposes it again as a new row."""
+    thesis = repo.fetch_one(conn, Thesis, "id = %s", (thesis_id,))
+    if thesis is None or thesis.status is not ThesisStatus.REVIEWED:
+        status = thesis.status if thesis else "missing"
+        raise ThemeGateError(f"thesis {thesis_id} is {status}, not REVIEWED")
+    kill_thesis(conn, thesis_id, rationale, commit=False)
+    _close_theme(conn, thesis.theme_id, "thesis_rejected", datetime.now(timezone.utc))
+    if commit:
+        conn.commit()
+
+
+def mark_dead(conn, thesis_id: int, rationale: str, commit: bool = True) -> list[Order]:
+    """The ONLY human path that retires a live thesis (spec invariant 4: dead
+    is always a user decision; the system never auto-unwinds).
+
+    Open positions → TIME_STOP SELL proposals; approving them at the order
+    gate is the confirmation event (thesis CLOSED, forecasts UNRESOLVED —
+    invariant 7: a manual exit never scores a forecast). No open positions →
+    the thesis closes immediately. Returns the proposed unwind orders.
+    """
+    thesis = repo.fetch_one(conn, Thesis, "id = %s", (thesis_id,))
+    if thesis is None or thesis.status is not ThesisStatus.ACTIVE:
+        status = thesis.status if thesis else "missing"
+        raise ThemeGateError(f"thesis {thesis_id} is {status}, not ACTIVE")
+    now = datetime.now(timezone.utc)
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "thesis_dead", "thesis_id": thesis_id},
+            human_rationale=rationale, created_at=now,
+        ),
+    )
+    open_positions = conn.execute(
+        "SELECT DISTINCT ON (symbol) symbol, qty FROM positions"
+        " WHERE experiment_id = %s ORDER BY symbol, as_of DESC",
+        (thesis.experiment_id,),
+    ).fetchall()
+    held = {
+        s: q for s, q in open_positions
+        if q > 0 and conn.execute(
+            "SELECT 1 FROM trades WHERE symbol = %s AND strategy_tag = %s LIMIT 1",
+            (s, thesis.strategy_tag),
+        ).fetchone()
+    }
+    orders: list[Order] = []
+    for symbol, qty in sorted(held.items()):
+        order = Order(
+            experiment_id=thesis.experiment_id, thesis_id=thesis_id,
+            symbol=symbol, side=OrderSide.SELL, status=OrderStatus.PROPOSED,
+            strategy_tag=thesis.strategy_tag, proposed_qty=qty,
+            exit_type=ExitType.TIME_STOP, proposed_at=now, created_at=now,
+        )
+        repo.insert(conn, order)
+        orders.append(order)
+    if not orders:
+        _finalize_dead(conn, thesis, now)
+    if commit:
+        conn.commit()
+    return orders
+
+
+def _finalize_dead(conn, thesis: Thesis, now: datetime) -> None:
+    conn.execute(
+        "UPDATE theses SET status = 'CLOSED' WHERE id = %s AND status = 'ACTIVE'",
+        (thesis.id,),
+    )
+    for f in repo.fetch(
+        conn, Forecast, "thesis_id = %s AND outcome IS NULL", (thesis.id,)
+    ):
+        conn.execute(
+            "UPDATE forecasts SET outcome = 'UNRESOLVED', resolution_cause = 'MANUAL',"
+            " resolved_at = %s WHERE id = %s", (now, f.id),
+        )
+    _close_theme(conn, thesis.theme_id, "dead", now)
+
+
+def _confirm_time_stop(conn, order: Order, now: datetime) -> None:
+    """Approving a TIME_STOP unwind confirms the `dead` decision."""
+    thesis = repo.fetch_one(conn, Thesis, "id = %s", (order.thesis_id,))
+    if thesis is not None:
+        _finalize_dead(conn, thesis, now)
+
+
+def _revert_dead(conn, order: Order, rationale: str, now: datetime) -> None:
+    """Rejecting the unwind cancels the death: sibling TIME_STOP proposals
+    cancelled, thesis stays ACTIVE and keeps monitoring."""
+    conn.execute(
+        "UPDATE orders SET status = 'CANCELLED', decided_at = %s WHERE thesis_id = %s"
+        " AND exit_type = 'TIME_STOP' AND status = 'PROPOSED'",
+        (now, order.thesis_id),
+    )
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "dead_reverted", "thesis_id": order.thesis_id},
+            human_rationale=f"unwind rejected: {rationale}", created_at=now,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Queue rendering
+# --------------------------------------------------------------------------- #
+
+def theme_queue(conn) -> list[Theme]:
+    return repo.fetch(
+        conn, Theme,
+        "status IN ('CANDIDATE', 'DEFERRED') ORDER BY status, proposed_on, id",
+    )
+
+
+def reviewed_theses(conn) -> list[Thesis]:
+    return repo.fetch(conn, Thesis, "status = 'REVIEWED' ORDER BY id")
+
+
+def render_theme_queue(conn) -> str:
+    today = today_et()
+    holder = accept_slot_used(conn, today)
+    lines = [
+        f"today's acceptance slot ({today}): "
+        + (f"USED by {holder!r}" if holder else "OPEN"),
+    ]
+    for t in theme_queue(conn):
+        age = (today - t.proposed_on).days
+        extra = (f", resurfaces {t.resurface_on}" if t.status is ThemeStatus.DEFERRED
+                 else "")
+        rolled = f", rolled forward x{t.rolled_forward_count}" if t.rolled_forward_count else ""
+        lines.append(
+            f"  [{t.status.value}] {t.slug} ({t.source.value.lower()}, {age}d old"
+            f"{rolled}{extra}): {t.title}"
+        )
+        if t.description:
+            for para in t.description.strip().split("\n\n"):
+                lines += [
+                    textwrap.indent(
+                        textwrap.fill(ln, width=88, subsequent_indent="  "), "      "
+                    )
+                    for ln in para.splitlines()
+                ]
+                lines.append("")
+    if len(lines) == 1:
+        lines.append("  (queue empty)")
+    pending = reviewed_theses(conn)
+    if pending:
+        lines.append("theses awaiting your decision:")
+        lines.extend(
+            f"  thesis #{t.id} [{t.strategy_tag}]: {t.title}" for t in pending
+        )
+    return "\n".join(lines)
+
+
 def interactive() -> None:
     with connect() as conn:
+        print(render_theme_queue(conn))
         queue = pending_orders(conn)
         if not queue:
-            print("no PROPOSED orders — queue is clear")
+            print("no PROPOSED orders — order queue is clear")
             return
         print(f"{len(queue)} order(s) awaiting approval")
         for order in queue:
@@ -213,10 +608,105 @@ def interactive() -> None:
                     break
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ops.approve", description=__doc__)
+    parser.add_argument("--list", action="store_true", help="read-only order view")
+    sub = parser.add_subparsers(dest="command")
+
+    theme = sub.add_parser("theme", help="theme intake decisions").add_subparsers(
+        dest="theme_command", required=True
+    )
+    theme.add_parser("list", help="show the candidate queue + today's slot")
+    p = theme.add_parser("propose", help="user-sourced candidate theme")
+    p.add_argument("slug")
+    p.add_argument("--title", required=True)
+    p.add_argument("--symbols", required=True, help="comma-separated tickers")
+    p.add_argument("--description", default=None)
+    p = theme.add_parser("accept", help="take today's single acceptance slot")
+    p.add_argument("slug")
+    p.add_argument("--rationale", default=None)
+    p = theme.add_parser("reject", help="close the thread (terminal; undecided themes defer on their own)")
+    p.add_argument("slug")
+    p.add_argument("--rationale", required=True)
+
+    thesis = sub.add_parser("thesis", help="deep-dive thesis decisions").add_subparsers(
+        dest="thesis_command", required=True
+    )
+    p = thesis.add_parser("accept", help="REVIEWED → ACTIVE + sized proposals")
+    p.add_argument("thesis_id", type=int)
+    p.add_argument("--rationale", default=None)
+    p = thesis.add_parser("reject", help="close the thread (theme CLOSED)")
+    p.add_argument("thesis_id", type=int)
+    p.add_argument("--rationale", required=True)
+
+    p = sub.add_parser("dead", help="retire a live thesis; unwind positions")
+    p.add_argument("thesis_id", type=int)
+    p.add_argument("--rationale", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _build_parser().parse_args(argv)
+    if args.command is None:
+        if args.list:
+            with connect() as conn:
+                print(render_theme_queue(conn))
+                for o in pending_orders(conn):
+                    print(render_context(conn, o))
+        else:
+            interactive()
+        return
+
+    with connect() as conn:
+        try:
+            if args.command == "theme":
+                if args.theme_command == "list":
+                    print(render_theme_queue(conn))
+                elif args.theme_command == "propose":
+                    t = propose_theme(
+                        conn, args.slug, args.title,
+                        [s.strip().upper() for s in args.symbols.split(",") if s.strip()],
+                        description=args.description,
+                    )
+                    print(f"CANDIDATE {t.slug} queued (source: human)")
+                elif args.theme_command == "accept":
+                    t = accept_theme(conn, args.slug, args.rationale)
+                    print(
+                        f"ACCEPTED {t.slug} — takes {t.accepted_on}'s slot; "
+                        f"deep dive runs Friday night"
+                    )
+                elif args.theme_command == "reject":
+                    t = reject_theme(conn, args.slug, args.rationale)
+                    print(f"REJECTED {t.slug} — thread closed; only a fresh "
+                          f"proposal brings it back")
+            elif args.command == "thesis":
+                if args.thesis_command == "accept":
+                    orders = accept_thesis(conn, args.thesis_id, args.rationale)
+                    print(
+                        f"ACTIVE thesis #{args.thesis_id} — {len(orders)} sized "
+                        f"proposal(s) now await order approval (run ops.approve)"
+                    )
+                else:
+                    reject_thesis(conn, args.thesis_id, args.rationale)
+                    print(
+                        f"REJECTED thesis #{args.thesis_id} — thread closed; the "
+                        f"theme only returns via a fresh proposal"
+                    )
+            elif args.command == "dead":
+                orders = mark_dead(conn, args.thesis_id, args.rationale)
+                if orders:
+                    print(
+                        f"DEAD pending confirmation: {len(orders)} TIME_STOP unwind "
+                        f"proposal(s) await order approval — approving them closes "
+                        f"thesis #{args.thesis_id}"
+                    )
+                else:
+                    print(f"DEAD confirmed: thesis #{args.thesis_id} closed "
+                          f"(no open positions); off monitoring")
+        except ThemeGateError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+
 if __name__ == "__main__":
-    if "--list" in sys.argv:
-        with connect() as conn:
-            for o in pending_orders(conn):
-                print(render_context(conn, o))
-    else:
-        interactive()
+    main()

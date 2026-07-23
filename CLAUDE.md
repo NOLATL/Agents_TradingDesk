@@ -40,6 +40,14 @@ These are load-bearing. If a task seems to require breaking one, stop and raise 
 
 8. **Deterministic risk & quarantine.** Risk limits and the corporate-action quarantine protocol are Python rules an LLM cannot modify. Unsupported corporate actions freeze-and-mark, never silently compute.
 
+Consolidation invariants (2026-07-22 unified pipeline — DECISIONS.md "Consolidation"):
+
+9. **One accepted theme per day, across all sources.** The unified daily scout (exactly one mandatory candidate per session — zero is a notified failure, not an outcome; 2026-07-23) and human proposals converge on one intake queue (`themes` table); the daily acceptance cap is DB-enforced. Source tags are provenance for reporting, never a separate approval path. Reject is terminal (thread CLOSED); undecided candidates defer at end of day and resurface Monday — silence never kills a theme, only an explicit reject does.
+10. **Deep dives are per-theme, Friday night.** One individual report per accepted theme (`reporting/deepdive/`), never batched. The reviewer stops at REVIEWED — only the human's `thesis accept` activates.
+11. **Monitoring never silently goes quiet.** Every ACTIVE thesis writes a `thesis_daily_status` row each session — NO_CHANGE is a recorded verdict; a missing row renders loudly as MONITOR GAP. Reversal suspicion escalates distinctly (WATCH / REVERSAL_SUSPECTED) and post-trade reversal alerts urgently.
+12. **"Dead" is exclusively a human decision.** `ops/approve.py dead` is the only path that retires a live thesis; the system surfaces reversal signals but never auto-unwinds or auto-retires. (The universe-freeze clause is retired: membership is point-in-time via `theme_symbols.activation_session` — pre-activation history never restates, which is what Gate B actually needs.)
+13. **Absorbed research is Qwen-generates / Sonnet-reviews.** `research/` artifacts (candidate proposals, theme briefs) are drafted by the local model and audited by `claude-sonnet-5` (`research/review_gate.py`). Rejected work is regenerated with the critique or surfaced loudly — never published silently, never dropped silently. Research narrative is never an assertion and never a decision input.
+
 ---
 
 ## Architecture (build order matters)

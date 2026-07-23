@@ -74,13 +74,16 @@ engine:
   controls:
     spy_symbol: SPY
     ewp_symbol: RSP                         # equal-weight S&P proxy ETF (DECISIONS.md)
-    # FROZEN AT GENESIS 2026-07-20 (human-confirmed): 15 names / 3 themes.
-    # Widening after genesis = new experiment id (benchmark comparability).
+    # GENESIS DOCUMENTATION ONLY (superseded 2026-07-22, universe unfreeze):
+    # the themes/theme_symbols tables are authoritative — accepted themes
+    # widen the universe point-in-time (data/universe.py). These 15 names
+    # record what was frozen at genesis 2026-07-20 and back the YAML-only
+    # fallback used by tests and a pre-migration fresh DB.
     momentum_universe: [ETN, GEV, HUBB, PWR, NVT,
                         CEG, VST, ETR, PEG, DUK,
                         DHI, LEN, PHM, INVH, AMH]
     momentum_top_n: 10                      # Decision Register #7
-    basket: [ETN, GEV, HUBB, PWR, NVT]      # same-basket-no-llm-timing control (active theme)
+    basket: [ETN, GEV, HUBB, PWR, NVT]      # same-basket control (superseded: DB point-in-time)
     benchmark_rebalance_sessions: 21        # ~monthly
   cluster_risk:
     correlation_threshold: 0.6              # Ledoit-Wolf-shrunk corr above this = same cluster
@@ -90,14 +93,17 @@ engine:
 stage3:
   genesis_date: "2026-07-20"               # go-live Monday; live sim + controls start here
   live_experiment: EXP-001
+  # GENESIS DOCUMENTATION ONLY (superseded 2026-07-22): themes now live in
+  # the themes table (migration 004 backfilled these three) and are managed
+  # via `ops.approve theme ...` — one accepted theme per day, all sources.
   themes:
-    grid-constraint:                        # active at genesis
+    grid-constraint:                        # accepted at genesis
       symbols: [ETN, GEV, HUBB, PWR, NVT]
       active: true
-    nuclear-renaissance:                    # enters rotation once the cycle is stable
+    nuclear-renaissance:                    # CANDIDATE in the intake queue
       symbols: [CEG, VST, ETR, PEG, DUK]
       active: false
-    housing-rental-pivot:
+    housing-rental-pivot:                   # CANDIDATE in the intake queue
       symbols: [DHI, LEN, PHM, INVH, AMH]
       active: false
   alerts:
@@ -108,5 +114,5 @@ stage3:
     base_url: https://framework.taila4cc29.ts.net:8444
   schedule:
     daily_monitor: "23:00 America/New_York (post-close; Tiingo composite final)"
-    weekly_research: "Sat 09:00 America/New_York"
+    weekly_research: "Fri 23:45 America/New_York (per accepted theme; spec 2026-07-22)"
     backup: "02:30 local (after the monitor)"

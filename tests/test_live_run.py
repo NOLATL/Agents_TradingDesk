@@ -116,8 +116,11 @@ def test_clean_append_and_idempotent_rerun(conn):
         s3 = live_run.run(conn, end, commit=False)    # later session extends
         assert s3.persisted_new_trades == 0           # no new orders → no new trades
         assert s3.replayed_sessions == len(sessions)
+        # Scope to the fixture window: the real EXP-001 has committed live NAV
+        # rows from genesis onward, outside this test's June replay.
         navs = conn.execute(
-            "SELECT count(*) FROM daily_nav WHERE experiment_id=%s", (exp.id,)
+            "SELECT count(*) FROM daily_nav WHERE experiment_id=%s"
+            " AND nav_date BETWEEN %s AND %s", (exp.id, START, END)
         ).fetchone()[0]
         assert navs == len(sessions)
         raise psycopg.Rollback
@@ -126,7 +129,19 @@ def test_clean_append_and_idempotent_rerun(conn):
 def test_completeness_gate_halts_before_replay(conn):
     with conn.transaction():
         exp, sessions = setup_live(conn, [])
-        future = date(2026, 7, 17)  # fixture docs end June 26; real bars end Jul 16
+        # First session past the newest ingested bar — guaranteed missing,
+        # regardless of how far the real nightly ingestion has advanced. Read
+        # the DOCUMENTS the gate itself reads (price_bars only advances when
+        # a live run persists, so it can lag a fresh ingest by a session).
+        from data.adapters.tiingo import parse_bars
+        from data.price_bars import _latest_docs_by_symbol
+        newest_bar = max(
+            (b.session
+             for sym, doc in _latest_docs_by_symbol(conn).items()
+             for b in parse_bars(doc, sym)),
+            default=END,
+        )
+        future = clock.next_session(max(newest_bar, END))
         with pytest.raises(live_run.CompletenessGateFailure):
             live_run.run(conn, future, commit=False)
         raise psycopg.Rollback

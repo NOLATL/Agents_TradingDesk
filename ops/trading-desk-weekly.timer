@@ -1,8 +1,8 @@
 [Unit]
-Description=Trading desk weekly cycle, Saturday 09:00 ET
+Description=Trading desk weekly deep-dive cycle, Friday 23:45 ET
 
 [Timer]
-OnCalendar=Sat *-*-* 09:00:00 America/New_York
+OnCalendar=Fri *-*-* 23:45:00 America/New_York
 Persistent=true
 RandomizedDelaySec=300
 

@@ -1,0 +1,50 @@
+# Concept-discovery sources. Consumed by the future weekly `discover` stage;
+# until then, this is the curated reading/subscription list.
+#
+# Division of labor: machine surfaces candidates with evidence (rss_feeds,
+# edgar_terms, futures_watch); human decides what becomes a concept note
+# (curated list below is for your own reading, not automation).
+
+# --- Machine-scannable: broad + trade-press feeds for the weekly LLM scan ---
+rss_feeds:
+  macro_markets:
+    - https://www.marketwatch.com/rss/topstories
+    - https://www.cnbc.com/id/100003114/device/rss/rss.html
+    - https://wolfstreet.com/feed/
+  energy_commodities:
+    - https://doomberg.substack.com/feed
+    - https://oilprice.com/rss/main
+  ai_datacenter:
+    - https://www.semianalysis.com/feed
+    - https://www.construction-physics.com/feed
+  defense_drones:
+    - https://breakingdefense.com/feed/
+    - https://www.twz.com/feed
+    - https://news.usni.org/feed
+
+# --- SEC EDGAR full-text search: trend-scan these terms in 10-K/10-Q filings.
+# Rising mention counts across many filers = a theme forming.
+# API base: https://efts.sec.gov/LATEST/search-index?q="<term>"&forms=10-K
+edgar_terms:
+  - "grid interconnection"
+  - "power purchase agreement"
+  - "small modular reactor"
+  - "liquid cooling"
+  - "high bandwidth memory"
+  - "unmanned aerial"
+  - "counter-drone"
+  - "attritable"
+  - "rare earth"
+  - "strait of hormuz"
+  - "reshoring"
+
+# --- Physical-market stress: screen these curves/rates for regime changes
+# (backwardation flips, big week-over-week moves) ---
+futures_watch: ["CL=F", "NG=F", "HG=F", "GC=F", "SI=F", "ZW=F"]
+
+# --- Human-curated (subscribe yourself; the judgment layer) ---
+curated:
+  - "Odd Lots podcast (Bloomberg) — macro/markets narrative discovery"
+  - "Hedge fund quarterly letters — aggregated free on r/SecurityAnalysis and elsewhere"
+  - "Thematic ETF filing calendar — Wall Street's theme list; heavy launches in a theme is also a top signal"
+  - "DoD budget request + appropriations docs (annual) — forced spending behind the drone theme"

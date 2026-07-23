@@ -10,6 +10,7 @@
 
 import json
 import os
+import sys
 import time as time_mod
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -55,7 +56,10 @@ def resolve_ciks(conn, symbols: list[str]) -> dict[str, str]:
     )
     mapping = json.loads(doc.raw_bytes)
     by_ticker = {row["ticker"].upper(): str(row["cik_str"]).zfill(10) for row in mapping.values()}
-    return {s: by_ticker[s] for s in symbols}
+    unmapped = [s for s in symbols if s not in by_ticker]
+    if unmapped:
+        print(f"edgar: no CIK for {', '.join(unmapped)} — skipped", file=sys.stderr)
+    return {s: by_ticker[s] for s in symbols if s in by_ticker}
 
 
 def ingest_company(conn, symbol: str, cik: str) -> list[tuple[Document, bool]]:
@@ -103,30 +107,42 @@ def ingest_company(conn, symbol: str, cik: str) -> list[tuple[Document, bool]]:
     return results
 
 
-def active_theme_symbols() -> list[str]:
-    """Filings are ingested for ACTIVE themes' symbols (stage3 config);
-
-    falls back to the Stage 1 slice universe when stage3 is absent."""
-    from config.loader import CONFIG
-
-    themes = CONFIG.get("stage3", {}).get("themes")
-    if not themes:
-        return list(SLICE["symbols"])
-    out: list[str] = []
-    for theme in sorted(themes):
-        if themes[theme].get("active"):
-            out.extend(themes[theme]["symbols"])
-    return sorted(set(out))
+def active_theme_symbols(conn) -> list[str]:
+    """Filings are ingested for accepted themes' symbols — theme_symbols is
+    the authoritative post-unfreeze universe, same source as the Tiingo
+    ingest (the YAML theme list is genesis documentation only). Falls back
+    to the Stage 1 slice universe on a fresh DB that predates migration 004."""
+    symbols = [
+        r[0] for r in conn.execute("SELECT DISTINCT symbol FROM theme_symbols")
+    ]
+    return sorted(symbols) if symbols else sorted(set(SLICE["symbols"]))
 
 
 def ingest_all() -> dict[str, int]:
     counts = {}
     with connect() as conn:
-        ciks = resolve_ciks(conn, active_theme_symbols())
-        for symbol, cik in ciks.items():
-            docs = ingest_company(conn, symbol, cik)
-            counts[symbol] = sum(1 for _, fetched in docs if fetched)
+        ciks = resolve_ciks(conn, active_theme_symbols(conn))
         conn.commit()
+        # Per-company commit + containment (mirrors tiingo.ingest_all): one
+        # company's fetch failure must not discard the rest of the night.
+        failures: list[str] = []
+        for symbol, cik in ciks.items():
+            try:
+                docs = ingest_company(conn, symbol, cik)
+                counts[symbol] = sum(1 for _, fetched in docs if fetched)
+                conn.commit()
+            except Exception as e:  # noqa: BLE001
+                conn.rollback()
+                failures.append(symbol)
+                print(f"edgar ingest FAILED for {symbol}: {e}", file=sys.stderr)
+        if failures:
+            from ops.alerts import notify
+            notify(
+                "EDGAR ingest failures",
+                f"{', '.join(failures)} failed — filings evidence may be stale"
+                " for these names",
+                priority="high", tags="warning",
+            )
     return counts
 
 
