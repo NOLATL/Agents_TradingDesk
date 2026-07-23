@@ -240,6 +240,38 @@ risks; all fixed same night, 229 tests green:
   next morning's briefing (the old "(no candidates today)" read as if
   generation had been skipped).
 
+## 2026-07-23 — Deep-dive report to research-report grade (human-directed)
+
+- **The Friday deep-dive renders like a sell-side research report, entirely
+  from persisted objects**: `reporting/deepdive.py` now rehydrates the full
+  dive from Postgres alone (basket JSON, reviewer audit + executive-summary
+  JUDGMENT assertions, both forecast versions for the pre-/post-review
+  probability diff, claims/metrics/macro assertions) and renders 13 sections
+  ending in a packet-style provenance appendix. No analyst/reviewer prompt or
+  schema changed — prompt_version is untouched, so this is the same
+  experiment. The independent review (challenges, price-narrative check,
+  do-nothing case) now renders on EVERY report, not only on rejection, and
+  the quarantined momentum/volatility values appear there labeled
+  reviewer-only (human-facing display only; invariant 5 governs analyst
+  context and basket construction, which never see them).
+- **Rehydration is manifest-first, window-closure fallback**: `run_slice`
+  writes a COMPUTED `evidence_packet_manifest` assertion (claim/metric/macro
+  assertion ids keyed to the surviving thesis version); pre-manifest dives
+  fall back to the run-clock timestamp + first-post-packet-JUDGMENT-id
+  window. Missing pieces degrade to loud placeholders, never exceptions —
+  a render crash inside `research_pass` would fail the cycle after committed
+  LLM work.
+- **Repair render closes the crash-window gap**: the weekly `report` phase
+  backfills any REVIEWED/REJECTED thesis of the week whose deep-dive file is
+  missing (idempotent; file-existence check).
+- **Draft renders never touch cycle artifacts**: `ops/render_deepdive.py`
+  renders any thesis (SELECT-only) to `reporting/output/drafts/` with a
+  DRAFT banner for layout review — never the real deepdive/ dir, vault,
+  cycle_log, or documents.
+
 ## Deferred ideas (noted, not built)
 
-- None yet. (Anything a schema tempts us to add beyond spec §3 gets listed here instead of added.)
+- **Analyst-authored narrative report sections** (industry backdrop, per-name
+  bull/bear cases, catalysts) — requires extending `AnalystOutput` + the
+  analyst system prompt, i.e. a new prompt_version = a new experiment
+  condition. Revisit deliberately, not as a report tweak. (2026-07-23)
