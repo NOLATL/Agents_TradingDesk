@@ -102,6 +102,32 @@ def render_daily(conn, session: date, summary) -> Path:
 # Consolidated-pipeline sections (spec 2026-07-22)
 # --------------------------------------------------------------------------- #
 
+def _scout_outcome_lines(conn, session: date) -> list[str]:
+    """The scout transparency line (migration 006): confirms the nightly
+    scout ran and says what happened, even when nothing entered the queue."""
+    row = conn.execute(
+        "SELECT session_date, outcome, slug, title, detail FROM scout_outcomes"
+        " ORDER BY session_date DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return []
+    d, outcome, slug, title, detail = row
+    when = "Nightly scout" if d == session else f"Nightly scout (last ran {d})"
+    if outcome == "PROPOSED":
+        return ["", f"{when}: ran and proposed `{slug}` — **{title}**."
+                    " Review approved it; it is in the queue below.", ""]
+    if outcome == "REJECTED":
+        reason = (detail or "").strip()
+        if len(reason) > 1000:
+            reason = reason[:1000] + "…"
+        quoted = "\n".join(f"> {l}" for l in reason.splitlines()) or "> (no critique recorded)"
+        return ["", f"{when}: ran and proposed `{slug}` — **{title}** —"
+                    " but the review agent rejected it, so no candidate entered"
+                    " the queue. Reviewer's reason:", "", quoted, ""]
+    return ["", f"{when}: ran but failed before producing a candidate"
+                f" — {detail or 'no detail recorded'}.", ""]
+
+
 def _theme_queue_section(conn, session: date) -> list[str]:
     holder = conn.execute(
         "SELECT slug FROM themes WHERE accepted_on = %s", (session,)
@@ -116,6 +142,7 @@ def _theme_queue_section(conn, session: date) -> list[str]:
         + (f"**USED** by `{holder[0]}`" if holder
            else "**OPEN** (one accepted theme per day, all sources)")
     )
+    lines += _scout_outcome_lines(conn, session)
     # Each candidate renders in full — the description is the decision
     # document, so the briefing must carry enough to accept or reject from.
     for slug, title, source, proposed_on, rolled, description in candidates:
@@ -126,11 +153,11 @@ def _theme_queue_section(conn, session: date) -> list[str]:
         if description:
             lines += ["", description.strip()]
     if not candidates:
-        # The queue can be legitimately empty at render time: this report
-        # writes before the intake phase, and the scout's mandatory daily
-        # proposal lands in the NEXT morning's briefing.
-        lines.append("- (queue empty — tonight's scout proposal lands in"
-                     " tomorrow's briefing)")
+        # Post-intake (final) render: an empty queue here means the scout's
+        # proposal was rejected or errored — the scout line above says which.
+        # The pre-intake render can also be legitimately empty for a moment;
+        # it is overwritten once intake completes.
+        lines.append("- (no candidates awaiting decision)")
     deferred = conn.execute(
         "SELECT count(*), min(resurface_on) FROM themes WHERE status = 'DEFERRED'"
     ).fetchone()

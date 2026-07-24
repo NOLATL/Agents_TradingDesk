@@ -4,8 +4,9 @@ Sequence: session guard → finality guard → ingest → live runner (guards +
 genesis replay + incremental persist) → milestone monitor (active theses,
 incl. the never-quiet daily status rows) → daily report → intake (absorbed
 economics research: resurface due DEFERRED themes, candidate scouts ≤1/day
-per lens, nightly theme briefs) → alerts. Before genesis this runs in
-dry-run mode (guards + ingest only).
+per lens, nightly theme briefs) → report re-render (scout outcome +
+new candidates into tomorrow's briefing) → alerts. Before genesis this
+runs in dry-run mode (guards + ingest only).
 
     uv run python -m ops.daily_monitor [--as-of YYYY-MM-DD]
 """
@@ -81,9 +82,28 @@ def finish_cycle(conn, cycle: CycleLog, status: str, phase: str, error: str | No
     conn.commit()
 
 
+def record_scout_outcome(
+    conn, session: date, outcome: str,
+    slug: str | None = None, title: str | None = None, detail: str | None = None,
+) -> None:
+    """One transparency row per session (migration 006). The daily report
+    renders the latest row, so the briefing confirms the scout ran even on
+    nights when review rejects and nothing enters the queue. Upsert: a
+    re-run after a FAILED cycle records its own outcome. Does not commit."""
+    conn.execute(
+        "INSERT INTO scout_outcomes (session_date, outcome, slug, title, detail)"
+        " VALUES (%s, %s, %s, %s, %s)"
+        " ON CONFLICT (session_date) DO UPDATE SET outcome = EXCLUDED.outcome,"
+        "  slug = EXCLUDED.slug, title = EXCLUDED.title, detail = EXCLUDED.detail",
+        (session, outcome, slug, title, detail),
+    )
+
+
 def intake(conn, session: date) -> None:
     """The absorbed economics research pass (runs after the report so a
-    research failure never costs the ledger or the briefing input)."""
+    research failure never costs the ledger or the briefing input; the
+    report is re-rendered afterwards so the scout outcome still reaches
+    the next morning's briefing)."""
     from data.adapters import rss as rss_adapter
     from ops.approve import roll_theme_queue
     from research import theme_brief
@@ -103,6 +123,10 @@ def intake(conn, session: date) -> None:
     # a silent zero-candidate day is no longer a valid result.
     try:
         theme = scout(conn)
+        # theme is None only on an idempotent re-run — the earlier run
+        # already recorded its outcome; leave that row alone.
+        if theme is not None:
+            record_scout_outcome(conn, session, "PROPOSED", theme.slug, theme.title)
         conn.commit()
         if theme is not None:
             notify(
@@ -113,6 +137,9 @@ def intake(conn, session: date) -> None:
             )
     except ReviewRejected as e:
         conn.rollback()
+        record_scout_outcome(conn, session, "REJECTED",
+                             e.proposal.slug, e.proposal.title, e.critique)
+        conn.commit()
         notify(
             "Scout proposal failed review — no candidate today",
             str(e), priority="high", tags="warning",
@@ -122,6 +149,9 @@ def intake(conn, session: date) -> None:
         # The ledger and report are already safe; a scout failure is a loud
         # notification, never a FAILED cycle (which would not auto-retry).
         conn.rollback()
+        record_scout_outcome(conn, session, "ERROR",
+                             detail=f"{type(e).__name__}: {str(e)[:800]}")
+        conn.commit()
         notify(
             "Scout crashed — no candidate today",
             f"{type(e).__name__}: {str(e)[:400]}",
@@ -185,6 +215,11 @@ def main(as_of_override: str | None = None) -> None:
             phase = "intake"
             if not summary.dry_run:
                 intake(conn, session)
+                # Final render: same deterministic report, now carrying the
+                # scout outcome and any new candidate — so tomorrow MORNING's
+                # briefing shows tonight's research, not yesterday's. The
+                # pre-intake render above stays as the crash-safe floor.
+                render_daily(conn, session, summary)
 
             finish_cycle(conn, cycle, "COMPLETE", phase)
             mode = "dry-run" if summary.dry_run else "live"

@@ -269,6 +269,28 @@ risks; all fixed same night, 229 tests green:
   DRAFT banner for layout review — never the real deepdive/ dir, vault,
   cycle_log, or documents.
 
+## 2026-07-24 — Scout transparency in the briefing (human-directed)
+
+The 2026-07-23 night exposed two gaps: a review-rejected scout proposal left
+no trace in the next briefing (queue just read "empty"), and the rejection
+alert itself crashed the run (em dash in an ntfy Title header — headers must
+be ASCII; `notify()` now sends metadata as UTF-8 query params and its alert
+path never raises). The human's direction: the briefing must confirm the
+nightly research ran and say what happened, whatever the outcome.
+
+- **`scout_outcomes` (migration 006)**: one row per session — PROPOSED /
+  REJECTED (with the reviewer's critique) / ERROR — upserted by the intake
+  phase. Operational metadata like `cycle_log`, not provenance, never a
+  decision input.
+- **Report renders the latest outcome** in the Theme queue section:
+  "Nightly scout: ran and proposed `slug` — Title — but the review agent
+  rejected it … Reviewer's reason: >…". A stale row renders with its date.
+- **Report re-renders after intake.** The pre-intake render stays as the
+  crash-safe floor; the final render carries tonight's scout outcome and any
+  new candidate. This also fixes a latent lag: a scout-proposed candidate
+  previously took TWO mornings to reach the briefing (report wrote before
+  intake, so the briefing embedded yesterday's queue).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
