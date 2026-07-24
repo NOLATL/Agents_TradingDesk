@@ -26,15 +26,21 @@ def notify(title: str, message: str, priority: str = "default", tags: str = "") 
     if not topic:
         print(f"[alert:no-topic] {title}: {message}", file=sys.stderr)
         return False
+    # Metadata goes in query params, not headers: HTTP headers must be
+    # ASCII-encodable, and a title like "… — no candidate today" crashed the
+    # whole nightly run (2026-07-23). ntfy accepts UTF-8 in query params.
+    params = {"title": title, "priority": priority}
+    if tags:
+        params["tags"] = tags
     try:
         httpx.post(
             f"{NTFY_BASE}/{topic}",
             content=message.encode(),
-            headers={"Title": title, "Priority": priority, "Tags": tags},
+            params=params,
             timeout=15,
         ).raise_for_status()
         return True
-    except httpx.HTTPError as e:
+    except Exception as e:  # noqa: BLE001 — the alert path must never raise
         print(f"[alert:send-failed {e}] {title}: {message}", file=sys.stderr)
         return False
 
