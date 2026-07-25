@@ -38,6 +38,15 @@ def outcome_row(conn):
     ).fetchone()
 
 
+def clear_real_outcomes(conn):
+    """The renderer shows the globally NEWEST outcome row (by design — the
+    briefing reports the latest scout run). Real nightly runs write rows into
+    the dev DB, which would shadow the 2001 sentinel; clear them inside the
+    test's rollback transaction so nothing is committed."""
+    conn.execute(
+        "DELETE FROM scout_outcomes WHERE session_date <> %s", (SESSION,))
+
+
 def test_record_is_an_upsert(conn):
     with conn.transaction():
         daily_monitor.record_scout_outcome(
@@ -52,6 +61,7 @@ def test_record_is_an_upsert(conn):
 def test_report_renders_rejected_scout_with_reason(conn):
     critique = "Reject. Three core problems:\n(1) duplicate coverage — thin variant"
     with conn.transaction():
+        clear_real_outcomes(conn)
         daily_monitor.record_scout_outcome(
             conn, SESSION, "REJECTED",
             "grid-interconnection-bottleneck", "Grid queue crunch", critique)
@@ -65,6 +75,7 @@ def test_report_renders_rejected_scout_with_reason(conn):
 
 def test_report_renders_proposed_and_error(conn):
     with conn.transaction():
+        clear_real_outcomes(conn)
         daily_monitor.record_scout_outcome(
             conn, SESSION, "PROPOSED", "so-new-theme", "A fresh pattern")
         text = "\n".join(_scout_outcome_lines(conn, SESSION))
@@ -80,6 +91,7 @@ def test_report_renders_proposed_and_error(conn):
 
 def test_stale_outcome_is_dated(conn):
     with conn.transaction():
+        clear_real_outcomes(conn)
         daily_monitor.record_scout_outcome(
             conn, SESSION, "PROPOSED", "so-old", "Old title")
         text = "\n".join(_scout_outcome_lines(conn, date(2001, 1, 3)))
