@@ -322,9 +322,73 @@ an immutable `documents` row (invariant 6 order evidence, invariant 3 replay).
 - Existing packet files were deleted from `reporting/output/` and the vault;
   `documents` rows were untouched (immutable, referenced by orders).
 
+## 2026-07-25 — Deep-dive report v2: FT-style narrative + sell-side layout (human-directed)
+
+The human read the first real W30 dives and rejected the presentation: claim
+bullets + verbatim-quote sub-bullets are near-duplicates; the report must
+read like an FT long read structured like a sell-side note (recommendation
+first, stat block, comparison scoreboard, charts/indicators), with citations
+as markdown FOOTNOTES, and carry **≥10 pages of body prose (4,500–10,000
+words, tables/charts/footnotes excluded)** — thoroughness over brevity.
+
+- **Narrative belongs to the Report Assembler (role 4)** — the constitution's
+  "write reports" role. `reporter.narrate()` generates per-section (lead,
+  thesis, macro, one per company, valuation, forecasts, risk, monitoring —
+  ~10 local qwen calls per dive) and persists ONE JUDGMENT assertion
+  `kind='report_narrative'` keyed to the surviving thesis. The renderer stays
+  deterministic and LLM-free (repairs/backfills rehydrate from Postgres).
+- **Containment, not trust**: `reporting/narrative_guard.py` mechanically
+  validates every section — each number must trace to source objects (exact
+  restatement or rounding to FEWER significant digits, via a digit-substring
+  tier + a rounding-lattice tier), every `[^A###]` marker must be a real
+  assertion id of the dive, tickers must be in the basket, and each section
+  must clear its word floor (violations become the retry critique, including
+  "expand: deepen the analysis of <uncited ids>"). The assembled whole then
+  passes the Sonnet gate (invariant-13 pattern; offline = deterministic
+  checks only + loud note; a REJECT regenerates only the named sections).
+  Validation is containment of the narrator — the underlying facts carry
+  their own provenance.
+- **Experiment ruling (human)**: the Report Assembler's new prompt is NOT a
+  new experiment condition — its output is JUDGMENT-only presentation and
+  never feeds a forecast, basket, or order. Analyst/reviewer prompts are
+  untouched. (The deferred-ideas note about *analyst*-authored narrative
+  stays deferred for exactly that reason.)
+- **Layout**: verdict line + StockRover-style stat table first; exposure
+  scoreboard (one symbol×metric matrix with 🟢/🟡/🔴 badges and ▰ bars)
+  replaces per-company mini-tables; macro table gains sparklines; Mermaid
+  xychart blocks for macro series, exposure scores, and forecast revisions
+  (render in Obsidian, degrade to code blocks elsewhere — accepted);
+  reviewer verdict/notes as Obsidian callouts; provenance appendix is now
+  footnote definitions (`[^A1454]: SOURCE_FACT — doc 938: "…"`), uncited
+  evidence in a folded callout. Any missing narrative section falls back to
+  the old deterministic rendering with a loud warning — the Friday cycle can
+  never fail on narrative problems.
+- **Backfill**: `ops/backfill_narrative.py <week>` regenerates narrative for
+  past dives from rehydrated evidence and rewrites the reports in place; the
+  W30 pair was backfilled on ship day.
+- **Ship-day iteration findings** (five backfill rounds, each narrowing the
+  failure surface — details in the commit messages `1b416a5`…`8bf88fe`):
+  the guard corpus must mirror serialize_context EXACTLY (a field shown to
+  the narrator but absent from the corpus rejects legitimate restatements);
+  truncation counts as rounding-to-fewer-digits; qwen's compound citations
+  are normalized; the Sonnet audit got its own rubric (fail only
+  fabrication/mischaracterization/unsupported citation) + structured
+  failing-section verdicts. **Quarantined price metrics are citable
+  reviewer-domain evidence for the narrator** — they already render in the
+  report (see above), the reviewer's prose quotes them, and withholding
+  their ids made qwen mis-cite backlog assertions; the prompt bans them as
+  ranking justification, so invariant 5 (analyst context + basket
+  construction) is untouched. **--repair mode converges monotonically**:
+  kept sections stay verbatim, only missing ones are generated and only new
+  material audited — full re-rolls lost approved sections to fresh dice.
+  Final W30 state: both reports complete, all sections Sonnet-approved,
+  4,166 / 4,780 body words.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
   bull/bear cases, catalysts) — requires extending `AnalystOutput` + the
   analyst system prompt, i.e. a new prompt_version = a new experiment
-  condition. Revisit deliberately, not as a report tweak. (2026-07-23)
+  condition. Revisit deliberately, not as a report tweak. The 2026-07-25
+  Report-Assembler narrative does NOT cover this: role 4 restates verified
+  objects; role 2 authoring new analysis remains deferred. (2026-07-23)
