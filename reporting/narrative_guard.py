@@ -82,8 +82,12 @@ def build_allowlist(ctx) -> Allowlist:
     ids: set[int] = set()
     symbols: set[str] = set()
 
+    # The corpus must equal exactly what the narrator saw (serialize_context)
+    # — a field shown to the model but missing here makes the guard reject
+    # legitimate restatements (W30: 0.737 lived in price_narrative_check).
     for text in (ctx.theme_title, ctx.theme_description, ctx.verdict,
-                 ctx.causal_chain, ctx.valuation_check, ctx.do_nothing_case):
+                 ctx.causal_chain, ctx.valuation_check, ctx.do_nothing_case,
+                 getattr(ctx, "price_narrative_check", None)):
         if text:
             corpus_parts.append(text)
     corpus_parts.extend(ctx.challenges or [])

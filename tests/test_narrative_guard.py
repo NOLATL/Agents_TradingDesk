@@ -44,6 +44,7 @@ def make_ctx(**over):
         milestones=[{"description": "capex stays elevated",
                      "falsification_criterion": "two guidance cuts"}],
         exit_criteria={"TIME_STOP": "2027-12-31"},
+        price_narrative_check="momentum is not driving this narrative",
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -175,6 +176,15 @@ def test_normalize_compound_citation_groups():
             == "Backlog grew. [^A12][^A34]")
     assert ng.normalize_markers("Backlog grew. ^A12", ids) \
         == "Backlog grew. [^A12]"
+
+
+def test_price_narrative_check_numbers_are_restatable():
+    """W30 regression #2: 0.737 lived in the reviewer's price-narrative
+    check — shown to the narrator but absent from the guard corpus."""
+    ctx = make_ctx(price_narrative_check="AVAV volatility 0.737 is elevated")
+    allow = ng.build_allowlist(ctx)
+    assert not check("Volatility of 0.737 concerns the reviewer. [^A299]",
+                     allow=allow)
 
 
 def test_prose_quoted_number_truncated_passes():

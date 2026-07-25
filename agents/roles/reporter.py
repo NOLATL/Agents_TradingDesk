@@ -100,6 +100,10 @@ You are a stylist over verified objects, NOT an author of facts. Hard rules:
    the supporting assertion, exactly like [^A1454]. One marker per bracket — write
    [^A1454][^A1455], never [^A1454, A1455]. Never mention an assertion id as a bare number
    in prose. Use only the assertion ids provided.
+   CITE PRECISELY: a marker must point at the assertion that ITSELF states the fact — never
+   a merely related one. If no assertion states the fact, cut the sentence. Facts that come
+   from the reviewer's prose (verdict, challenges, price-narrative check) have NO assertion
+   id: attribute them in words ("the reviewer notes …") with no marker.
 3. Mention only the basket's ticker symbols. Never introduce another ticker.
 4. Probabilities are the desk's measurement instrument: quote them only as recorded, never
    invent or re-derive one.
@@ -555,7 +559,12 @@ def _audit(conn, n, ctx, shared, allow, known, experiment_id,
             text, note = _gen_section(
                 conn, name=name, target_key=target,
                 instruction=instruction + "\n\nAn independent audit rejected"
-                " the previous version of this section:\n" + verdict.critique,
+                " the previous version of this section for these reasons:\n"
+                + verdict.critique
+                + "\n\nRewrite the section fixing these problems. Do NOT"
+                " mention the audit, the critique, citations being corrected,"
+                " or any of this feedback in your prose — write the section"
+                " as if for the first time.",
                 shared=shared, allow=allow, known=known,
                 experiment_id=experiment_id, suggest_ids=ids, max_attempts=2,
                 require_marker=(name != "lead"))
