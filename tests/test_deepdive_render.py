@@ -136,6 +136,13 @@ def _dive(conn, slug: str, *, status=ThesisStatus.REVIEWED,
         created_at=NOW,
     )
     repo.insert_assertion(conn, macro)
+    macro2 = Assertion(
+        type=ProvenanceType.SOURCE_FACT,
+        value={"series_id": "DGS10", "date": "2026-05-31", "value": 4.0},
+        source_doc_id=doc.id, citation_span="DGS10@2026-05-31",
+        created_at=NOW,
+    )
+    repo.insert_assertion(conn, macro2)
 
     basket = json.dumps([{
         "symbol": "AAA", "rank": 1, "justification": justification,
@@ -228,9 +235,9 @@ def test_every_assertion_ref_resolves_in_appendix(conn):
     with conn.transaction():
         v2, *_ = _dive(conn, "dd-refs")
         out = deepdive.render(conn, v2, WEEK, None)
-        appendix = out.split("## Provenance appendix")[1]
-        resolved = set(re.findall(r"\| A(\d+) \|", appendix))
-        used = set(re.findall(r"\bA(\d+)\b", out.split("## Provenance appendix")[0]))
+        body, appendix = out.split("## Provenance appendix")
+        resolved = set(re.findall(r"^\[\^A(\d+)\]:", appendix, re.MULTILINE))
+        used = set(re.findall(r"\[\^A(\d+)\](?!:)", body))
         assert used and used <= resolved
         raise psycopg.Rollback
 
@@ -266,11 +273,12 @@ def test_table_cells_escape_pipes_and_newlines(conn):
                        justification="metric|driven\nargument")
         out = deepdive.render(conn, v2, WEEK, None)
         assert "metric\\|driven argument" in out
-        # verbatim quote contains '|' — must not break the appendix table
-        # (3 columns → exactly 4 unescaped pipe delimiters per row)
+        # appendix is footnote definitions now: single-line defs, and a
+        # pipe-bearing verbatim quote must never start a markdown table there
         appendix = out.split("## Provenance appendix")[1]
-        assert all(len(re.findall(r"(?<!\\)\|", line)) == 4
-                   for line in appendix.splitlines() if line.startswith("|"))
+        assert not [ln for ln in appendix.splitlines() if ln.startswith("|")]
+        assert all(ln.startswith(("[^A", ">", "#", "Every", ""))
+                   for ln in appendix.splitlines())
         raise psycopg.Rollback
 
 
@@ -311,6 +319,92 @@ def test_manifest_is_preferred_over_window_closure(conn):
         out = deepdive.render(conn, v2, WEEK, None)
         assert "AAA grew backlog" in out
         assert "claim only the manifest lists" in out
+        raise psycopg.Rollback
+
+
+def _narrative(conn, v2, claim_id, *, dropped=(), body_words=5000,
+               audit="approved", **sections):
+    base = {
+        "lead": "Verdict first: the reviewer activated this thesis.",
+        "thesis_narrative": f"The chain holds on backlog. [^A{claim_id}]",
+        "macro_narrative": None,
+        "company_narratives": [
+            {"symbol": "AAA",
+             "narrative": f"AAA anchors the basket on backlog. [^A{claim_id}]"}],
+        "valuation_discussion": None,
+        "forecast_rationale": None,
+        "risk_discussion": None,
+        "monitoring_outlook": None,
+    }
+    base.update(sections)
+    _judgment(conn, {"thesis_id": v2.id, "kind": "report_narrative",
+                     "narrative": base, "dropped_sections": list(dropped),
+                     "audit": audit, "body_words": body_words})
+
+
+def test_narrative_sections_render_with_resolving_markers(conn):
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-nar")
+        _narrative(conn, v2, claim.id)
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "Verdict first: the reviewer activated" in out
+        assert "The chain holds on backlog." in out
+        assert "AAA anchors the basket on backlog." in out
+        assert f"[^A{claim.id}]:" in out  # marker resolves as footnote def
+        assert "Narrative unavailable for AAA" not in out
+        assert "Raw causal chain (analyst JUDGMENT)" in out
+        raise psycopg.Rollback
+
+
+def test_absent_narrative_falls_back_wholesale(conn):
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-nonar")
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "no narrative recorded for this dive" in out
+        assert "Evidence on file (SOURCE_FACT):" in out
+        assert "AAA grew backlog" in out
+        raise psycopg.Rollback
+
+
+def test_missing_company_narrative_falls_back_per_symbol(conn):
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-partial")
+        _narrative(conn, v2, claim.id, company_narratives=[])
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "Narrative unavailable for AAA" in out
+        assert "Evidence on file (SOURCE_FACT):" in out
+        assert "The chain holds on backlog." in out  # other sections intact
+        raise psycopg.Rollback
+
+
+def test_dropped_sections_render_loud_note(conn):
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-dropped")
+        _narrative(conn, v2, claim.id, dropped=["risk_discussion"])
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "narrative section 'risk_discussion' was dropped" in out
+        raise psycopg.Rollback
+
+
+def test_low_body_words_renders_loud_note(conn):
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-thin")
+        _narrative(conn, v2, claim.id, body_words=100)
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "below the 4500-word target" in out
+        raise psycopg.Rollback
+
+
+def test_scoreboard_sparkline_and_mermaid(conn):
+    with conn.transaction():
+        v2, *_ = _dive(conn, "dd-visual")
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "## Exposure scoreboard" in out
+        # old per-company metric mini-table header is gone
+        assert "| Assertion | Metric | Value | Function (version) |" not in out
+        assert "```mermaid" in out and "xychart-beta" in out
+        assert any(g in out for g in "▁▂▃▄▅▆▇█")  # macro trend sparkline
+        assert "▰" in out  # exposure bar
         raise psycopg.Rollback
 
 
