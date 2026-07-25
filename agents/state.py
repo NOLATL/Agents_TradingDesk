@@ -157,14 +157,16 @@ class ReportSummary(BaseModel):
 class SectionDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(max_length=10000)
+    # max_length is only a JSON-runaway guard — generous by design so a
+    # thorough section is never rejected for length at the schema layer
+    text: str = Field(max_length=25000)
 
 
 class CompanyNarrative(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     symbol: str
-    narrative: str = Field(max_length=8000, description=(
+    narrative: str = Field(max_length=25000, description=(
         "300-500 word narrative: why this name, what the filings show,"
         " comparison to the other names, what would falsify — citing [^A###]"))
 

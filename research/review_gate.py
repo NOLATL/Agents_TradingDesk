@@ -79,7 +79,7 @@ def _log_usage(model: str, usage) -> None:
 
 def review(kind: str, artifact: str, context: str, *,
            artifact_cap: int = 20000, context_cap: int = 12000,
-           max_tokens: int = 2000) -> ReviewVerdict:
+           max_tokens: int = 4000) -> ReviewVerdict:
     """One Sonnet audit of one generated artifact. Default caps fit short
     research artifacts; long-form callers (deep-dive narrative) raise them."""
     if not os.getenv("ANTHROPIC_API_KEY"):

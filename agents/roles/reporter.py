@@ -457,9 +457,12 @@ def _review_once(text: str, shared: str, notes: list[str]):
     twice — which must NOT be treated as approval."""
     for attempt in (1, 2):
         try:
+            # Generous caps (human direction 2026-07-25): a 10k-word
+            # narrative is ~70k chars — never truncate the artifact or the
+            # verdict; the marginal Sonnet cost is accepted.
             return review_gate.review(
                 "deepdive_narrative", text, shared,
-                artifact_cap=80000, context_cap=30000, max_tokens=4000)
+                artifact_cap=200_000, context_cap=100_000, max_tokens=8000)
         except review_gate.ReviewUnavailable as e:
             notes.append(f"Sonnet audit skipped ({e}) — deterministic checks only")
             return f"skipped ({e})"
