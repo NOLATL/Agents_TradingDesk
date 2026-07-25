@@ -65,9 +65,9 @@ def run(
     theme_id: int | None = None, emphasis_terms: list[str] | None = None,
     fred_series: list[str] | None = None,
 ):
-    """One deep dive. Returns (thesis_v2, packet_paths) — the weekly cycle
-    caches the packet against the thesis so the order gate later shows the
-    evidence of THIS dive, and the REVIEWED thesis awaits `thesis accept`."""
+    """One deep dive. Returns (thesis_v2, packet_doc_id) — the packet is
+    cached here as an immutable documents row so the order gate later shows
+    the evidence of THIS dive, and the REVIEWED thesis awaits `thesis accept`."""
     clock = datetime.now(timezone.utc)
     with connect() as conn:
         experiment = ensure_experiment(conn)
@@ -90,10 +90,9 @@ def run(
         content = packet_renderer.render(
             conn, pkt, thesis_v2, analyst_out, review_out, summary, clock
         )
-        paths = packet_renderer.write(content, clock, theme=pkt.theme)
-        for p in paths:
-            print(f"      wrote {p}")
-        return thesis_v2, paths
+        packet_doc_id = packet_renderer.cache(conn, content, clock, theme=pkt.theme)
+        print(f"      cached decision packet as documents #{packet_doc_id}")
+        return thesis_v2, packet_doc_id
 
 
 if __name__ == "__main__":

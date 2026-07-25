@@ -1,21 +1,27 @@
-"""Decision packet renderer — deterministic markdown from persisted objects.
+"""Decision packet — immutable decision evidence, cached in `documents`.
+
+The packet is a machine artifact, not a report: it is rendered once per dive
+and cached as an immutable `documents` row so orders can reference exactly
+what the human saw (invariant 6) and research replays from stored artifacts
+(invariant 3). The human-facing per-theme report is the deep dive
+(`reporting/deepdive.py`), which supersets every packet section and
+cross-links the cached row. No packet files are written anywhere.
 
 Adds no claims: every line traces to a stored object; the provenance appendix
 resolves every assertion id to a citation span (SOURCE_FACT), a named
 function+version (COMPUTED), or a labeled JUDGMENT.
+
+This module owns the packet's whole lifecycle: render → cache → latest_doc_id.
 """
 
-import json
+import hashlib
 from datetime import datetime
-from pathlib import Path
 
 from agents.state import AnalystOutput, EvidencePacket, ReviewerOutput
 from config.loader import SLICE
 from data import repository as repo
 from schemas.enums import ProvenanceType
-from schemas.models import Assertion, Forecast, Thesis
-
-OUTPUT_DIR = Path(__file__).parent / "output"
+from schemas.models import Assertion, Document, Forecast, Thesis
 
 
 def render(
@@ -130,19 +136,39 @@ def render(
     return "\n".join(lines)
 
 
-def write(content: str, clock: datetime, theme: str | None = None) -> list[Path]:
+def cache(conn, content: str, clock: datetime, theme: str | None = None,
+          commit: bool = True) -> int:
+    """Cache the rendered packet as an immutable documents row and return its
+    id. Idempotent: an identical packet (by sha256) reuses the existing row.
+
+    The name in retrieval_url carries the run's theme — the packet↔thesis
+    linkage (latest_doc_id) matches on it, for both these `desk://` rows and
+    the legacy `file://` rows cached before packets became DB-only."""
     stamp = clock.strftime("%Y-%m-%d")
-    # The filename carries the run's theme — the packet↔thesis linkage
-    # (approve._thesis_packet_doc_id) matches on it.
     name = f"decision-packet-{theme or SLICE['theme']}-{stamp}.md"
-    paths = []
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    local = OUTPUT_DIR / name
-    local.write_text(content)
-    paths.append(local)
-    vault = Path(SLICE["vault_dir"]) / "packets"
-    vault.mkdir(parents=True, exist_ok=True)
-    mirror = vault / name
-    mirror.write_text(content)
-    paths.append(mirror)
-    return paths
+    raw = content.encode("utf-8")
+    h = hashlib.sha256(raw).hexdigest()
+    existing = repo.document_by_hash(conn, h)
+    if existing:
+        return existing.id
+    doc = Document(
+        content_hash=h, raw_bytes=raw, extracted_text=content,
+        retrieval_url=f"desk://packets/{name}", source_name="desk_packet",
+        ingestion_time=clock, first_eligible_decision_time=clock,
+    )
+    doc_id = repo.insert_document(conn, doc)
+    if commit:
+        conn.commit()
+    return doc_id
+
+
+def latest_doc_id(conn, strategy_tag: str) -> int | None:
+    """Newest cached decision packet for this theme — the evidence the order
+    gate shows must be the packet of THIS theme's dive, not whichever theme
+    happened to run last."""
+    row = conn.execute(
+        "SELECT id FROM documents WHERE source_name = 'desk_packet'"
+        " AND retrieval_url LIKE %s ORDER BY ingestion_time DESC, id DESC LIMIT 1",
+        (f"%decision-packet-{strategy_tag}-%",),
+    ).fetchone()
+    return row[0] if row else None

@@ -58,7 +58,7 @@ Layered, and lower layers must be solid before higher ones are built:
 - **Layer 1 — Local inference:** Ollama, pinned models, OpenAI-compatible endpoint. Tool calls wrapped with parse-and-retry (Ollama leaks tool calls into `content` on some models).
 - **Layer 2 — Agent roles:** four LLM roles (Evidence Collector, Research Analyst, Independent Reviewer, Report Assembler) as plain Python + Pydantic. **Not LangGraph yet** — that is earned later.
 - **Layer 3 — Supervisor:** you (Claude Code) + the human. Not part of the automated loop.
-- **Layer 4 — Reporting & control:** JSON → markdown decision packets and reports; Obsidian vault; CLI approval flow. **No web dashboard yet.**
+- **Layer 4 — Reporting & control:** JSON → markdown reports (daily, weekly, per-theme deep dives); decision packets cached DB-only as immutable `documents` evidence (view via `ops.approve packet`); Obsidian vault; CLI approval flow. **No web dashboard yet.**
 
 **Everything that is not one of the four LLM roles is a deterministic service, not an agent:** risk, sizing, portfolio construction, execution/simulator, controls, monitoring, reconciliation, metrics.
 
@@ -117,7 +117,7 @@ Confirm at Stage 0 and record actuals in `docs/DECISIONS.md`:
 - Postgres: installed via apt during setup. **Decide and record** whether the project uses that system Postgres or a Docker-Compose Postgres container; the spec assumes Compose for portability — confirm before wiring connection strings.
 - Docker + Docker Compose v2 present; user in `docker` group.
 - `ufw` is active with SSH/3389/Samba allow-rules. Any service that must be reachable from another host needs an allow rule; localhost-bound Compose services do not.
-- Obsidian vault path: `/home/jared/obsidian-brain` (confirmed Stage 0); desk output goes to `TradingDesk/` at vault root. The vault is covered by Obsidian sync — decision packets and notes mirrored there are offsite-replicated by that mechanism.
+- Obsidian vault path: `/home/jared/obsidian-brain` (confirmed Stage 0); desk output goes to `TradingDesk/` at vault root. The vault is covered by Obsidian sync — reports and notes mirrored there are offsite-replicated by that mechanism (decision packets live DB-only in `documents`, covered by the nightly pg_dump).
 - Offsite DB backup: **Google Drive via `rclone`** (replaced the original Cloudflare R2/restic plan — see `docs/DECISIONS.md` and `docs/STAGE_2_KICKOFF.md`). Nightly `pg_dump | gzip` to a local dir on the 1TB card, then `rclone copy` of the sealed dump to the Drive remote; never live-sync the data dir. rclone config/token stays outside any LLM context. Code is covered by a private GitHub remote.
 
 ---

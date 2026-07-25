@@ -26,8 +26,8 @@ from config.loader import CONFIG
 from data import repository as repo
 from data.db import connect
 from ops.alerts import loud, notify
-from ops.proposal_builder import build_proposals, cache_packet
-from reporting import deepdive
+from ops.proposal_builder import build_proposals
+from reporting import deepdive, packet
 from reporting.weekly import render_weekly
 from schemas.enums import ThesisStatus
 from schemas.models import CycleLog, Theme, Thesis
@@ -96,22 +96,19 @@ def research_pass(conn, cycle: CycleLog) -> tuple[list[Thesis], list[Thesis]]:
             continue
         rc = theme.research_config or {}
         print(f"deep dive: {theme.slug} ({rc.get('symbols')})")
-        thesis, packet_paths = run_slice.run(
+        # run_slice caches the packet as an immutable documents row, keyed by
+        # theme in its retrieval_url — `thesis accept` later attaches exactly
+        # this evidence to the orders.
+        thesis, packet_doc_id = run_slice.run(
             symbols=rc.get("symbols"), theme=theme.slug, theme_id=theme.id,
             emphasis_terms=rc.get("emphasis_terms"),
             fred_series=rc.get("fred_series"),
         )
-        # Cache the packet NOW, keyed by theme in its filename — `thesis
-        # accept` later attaches exactly this evidence to the orders.
-        if packet_paths:
-            cache_packet(conn, str(packet_paths[0]), datetime.now(timezone.utc))
-            conn.commit()
         # The artifact is written on BOTH verdicts: a reviewer-REJECTED dive
         # must still show the human what was tried and why it failed —
         # silence would read as "nothing happened Friday".
         (survivors if thesis.status is ThesisStatus.REVIEWED else rejected).append(thesis)
-        deepdive.write(conn, thesis, cycle.period_key,
-                       str(packet_paths[0]) if packet_paths else None)
+        deepdive.write(conn, thesis, cycle.period_key, packet_doc_id)
         done.append(marker)
         mark(conn, cycle, ",".join(done))
     return survivors, rejected
@@ -155,7 +152,7 @@ def repair_missing_dives(conn, period_key: str) -> int:
         if deepdive.expected_path(period_key, thesis.strategy_tag).exists():
             continue
         deepdive.write(conn, thesis, period_key,
-                       deepdive.latest_packet_path(thesis.strategy_tag))
+                       packet.latest_doc_id(conn, thesis.strategy_tag))
         print(f"repair render: deep dive {period_key}-{thesis.strategy_tag}"
               f" (thesis #{thesis.id}) was missing — backfilled")
         n += 1
@@ -165,8 +162,6 @@ def repair_missing_dives(conn, period_key: str) -> int:
 def proposal_pass(conn) -> int:
     """Safety net: sized proposals for any ACTIVE thesis without orders,
     using that thesis's OWN packet (never the globally-latest one)."""
-    from ops.approve import _thesis_packet_doc_id
-
     exp_id = conn.execute(
         "SELECT id FROM experiments WHERE name = %s", (STAGE3["live_experiment"],)
     ).fetchone()[0]
@@ -176,7 +171,7 @@ def proposal_pass(conn) -> int:
         conn, Thesis, "experiment_id = %s AND status = 'ACTIVE' ORDER BY id", (exp_id,)
     ):
         orders = build_proposals(
-            conn, thesis, today, _thesis_packet_doc_id(conn, thesis)
+            conn, thesis, today, packet.latest_doc_id(conn, thesis.strategy_tag)
         )
         n += len(orders)
     return n

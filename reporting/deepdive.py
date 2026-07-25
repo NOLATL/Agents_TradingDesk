@@ -196,7 +196,7 @@ def _macro_rows(macro: list[Assertion]) -> list[tuple]:
 # Report
 # --------------------------------------------------------------------------- #
 
-def render(conn, thesis: Thesis, week_key: str, packet_path: str | None) -> str:
+def render(conn, thesis: Thesis, week_key: str, packet_doc_id: int | None) -> str:
     b = rehydrate(conn, thesis)
     rejected = thesis.status.value == "REJECTED"
     add = (lines := []).append
@@ -209,8 +209,9 @@ def render(conn, thesis: Thesis, week_key: str, packet_path: str | None) -> str:
         + (f" (source: {b.theme.source.value.lower()})" if b.theme else ""))
     if b.audit and b.audit.get("verdict"):
         add(f"- reviewer verdict: {b.audit['verdict']}")
-    if packet_path:
-        add(f"- evidence packet: {packet_path}")
+    if packet_doc_id:
+        add(f"- evidence packet: documents #{packet_doc_id} (immutable —"
+            f" view: `uv run python -m ops.approve packet {packet_doc_id}`)")
     add(f"- model: `{thesis.model_tag}` · prompt {thesis.prompt_version[:12]}…")
     for note in b.notes:
         add(f"- ⚠ {note}")
@@ -447,17 +448,9 @@ def expected_path(week_key: str, strategy_tag: str) -> Path:
     return OUTPUT_DIR / f"{week_key}-{strategy_tag}.md"
 
 
-def latest_packet_path(strategy_tag: str) -> str | None:
-    """Newest cached decision-packet file for this theme, if any."""
-    packets = sorted(
-        OUTPUT_DIR.parent.glob(f"decision-packet-{strategy_tag}-*.md")
-    )
-    return str(packets[-1]) if packets else None
-
-
 def write(conn, thesis: Thesis, week_key: str,
-          packet_path: str | None = None) -> list[Path]:
-    content = render(conn, thesis, week_key, packet_path)
+          packet_doc_id: int | None = None) -> list[Path]:
+    content = render(conn, thesis, week_key, packet_doc_id)
     name = f"{week_key}-{thesis.strategy_tag}.md"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     local = OUTPUT_DIR / name

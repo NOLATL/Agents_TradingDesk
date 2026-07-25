@@ -88,7 +88,10 @@ def render_context(conn, order: Order) -> str:
     if order.decision_packet_doc_id:
         doc = repo.fetch_one(conn, Document, "id = %s", (order.decision_packet_doc_id,))
         if doc:
-            lines.append(f"decision packet: {doc.retrieval_url}")
+            lines.append(
+                f"decision packet: documents #{doc.id} —"
+                f" `ops.approve packet {doc.id}` to view"
+            )
     incidents = conn.execute(
         "SELECT incident_class, symbol, left(description, 80) FROM data_incidents"
         " WHERE status = 'OPEN' ORDER BY id DESC LIMIT 5"
@@ -385,12 +388,20 @@ def _thesis_packet_doc_id(conn, thesis: Thesis) -> int | None:
     """Newest cached decision packet for this thesis's theme — the evidence
     the order gate shows must be the packet of THIS deep dive, not whichever
     theme happened to run last."""
-    row = conn.execute(
-        "SELECT id FROM documents WHERE source_name = 'desk_packet'"
-        " AND retrieval_url LIKE %s ORDER BY ingestion_time DESC, id DESC LIMIT 1",
-        (f"%decision-packet-{thesis.strategy_tag}-%",),
-    ).fetchone()
-    return row[0] if row else None
+    from reporting import packet
+
+    return packet.latest_doc_id(conn, thesis.strategy_tag)
+
+
+def packet_text(conn, doc_id: int) -> str:
+    """The exact evidence a documents row holds (invariant 6 viewing path:
+    packets are DB-only; this is how the human reads what an order cites)."""
+    doc = repo.fetch_one(
+        conn, Document, "id = %s AND source_name = 'desk_packet'", (doc_id,)
+    )
+    if doc is None:
+        raise ThemeGateError(f"documents #{doc_id} is not a cached decision packet")
+    return doc.extracted_text or doc.raw_bytes.decode("utf-8", errors="replace")
 
 
 def accept_thesis(conn, thesis_id: int, rationale: str | None = None,
@@ -642,6 +653,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("dead", help="retire a live thesis; unwind positions")
     p.add_argument("thesis_id", type=int)
     p.add_argument("--rationale", required=True)
+
+    p = sub.add_parser(
+        "packet", help="print a cached decision packet (immutable order evidence)"
+    )
+    p.add_argument("doc_id", type=int)
+    p.add_argument("--out", default=None, help="write to a file instead of stdout")
     return parser
 
 
@@ -692,6 +709,15 @@ def main(argv: list[str] | None = None) -> None:
                         f"REJECTED thesis #{args.thesis_id} — thread closed; the "
                         f"theme only returns via a fresh proposal"
                     )
+            elif args.command == "packet":
+                text = packet_text(conn, args.doc_id)
+                if args.out:
+                    from pathlib import Path
+
+                    Path(args.out).write_text(text)
+                    print(f"wrote documents #{args.doc_id} to {args.out}")
+                else:
+                    print(text)
             elif args.command == "dead":
                 orders = mark_dead(conn, args.thesis_id, args.rationale)
                 if orders:

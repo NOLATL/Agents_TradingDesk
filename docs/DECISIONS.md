@@ -291,6 +291,37 @@ nightly research ran and say what happened, whatever the outcome.
   previously took TWO mornings to reach the briefing (report wrote before
   intake, so the briefing embedded yesterday's queue).
 
+## 2026-07-25 — Decision packet demoted to DB-only evidence (human-directed)
+
+An output review found the research-report-grade deep dive (2026-07-23) had
+become a strict superset of the decision packet: every packet section renders
+inside the dive, and both were written per theme, same Friday, to repo and
+vault. The human's direction: delete the packet files, stop producing them,
+and make the remaining interdependency obvious. The packet's irreplaceable
+role was never the file — `cache_packet` already stored the full content in
+an immutable `documents` row (invariant 6 order evidence, invariant 3 replay).
+
+- **Packets are DB-only.** `reporting/packet.py` owns the whole lifecycle:
+  `render` → `cache` (sha256-deduped `documents` row, `source_name
+  'desk_packet'`, `retrieval_url desk://packets/decision-packet-<theme>-<date>.md`)
+  → `latest_doc_id`. No packet file is written anywhere; `packet.write` and
+  the vault `packets/` mirror are gone. Legacy `file://` rows still match
+  `latest_doc_id`'s LIKE pattern; their dangling paths are harmless — the
+  content lives in the row.
+- **Caching moved into `run_slice`** (returns `(thesis, packet_doc_id)`),
+  closing the crash window between a dive's commit and the packet cache that
+  the weekly repair pass previously had to tolerate.
+- **The deep dive is the sole per-theme human report.** It cross-links the
+  evidence row ("documents #N"); the order gate cites the row id; the new
+  `ops.approve packet <doc_id> [--out]` prints the exact cached evidence —
+  the invariant-6 viewing path now that there is no file to open.
+- **Draft renderer deleted** (`ops/render_deepdive.py` + `output/drafts/`,
+  superseding the 2026-07-23 "draft renders" note): its layout-review job
+  ended with the deep-dive rewrite, and it was a third code path rendering
+  the same report. Recoverable from git (`ae15aa8`) if ever needed.
+- Existing packet files were deleted from `reporting/output/` and the vault;
+  `documents` rows were untouched (immutable, referenced by orders).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

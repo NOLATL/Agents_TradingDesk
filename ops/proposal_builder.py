@@ -17,7 +17,7 @@ from analytics.engine.state import SHARE_QUANTUM
 from config.loader import CONFIG
 from data import repository as repo
 from schemas.enums import OrderSide, OrderStatus, ThesisStatus
-from schemas.models import Document, Order, Thesis
+from schemas.models import Order, Thesis
 
 D = Decimal
 VOL_LOOKBACK = 120
@@ -59,27 +59,6 @@ def _current_nav(conn, experiment_id: int, initial_cash: Decimal) -> Decimal:
         (experiment_id,),
     ).fetchone()
     return row[0] if row else initial_cash
-
-
-def cache_packet(conn, packet_path: str, now: datetime) -> int:
-    """The decision packet becomes an immutable documents row so orders can
-
-    reference exactly what the human saw (invariant 6 evidence)."""
-    import hashlib
-
-    content = open(packet_path, "rb").read()
-    h = hashlib.sha256(content).hexdigest()
-    existing = repo.document_by_hash(conn, h)
-    if existing:
-        return existing.id
-    doc = Document(
-        content_hash=h, raw_bytes=content,
-        extracted_text=content.decode("utf-8", errors="replace"),
-        retrieval_url=f"file://{packet_path}", source_name="desk_packet",
-        ingestion_time=now, first_eligible_decision_time=now,
-    )
-    repo.insert_document(conn, doc)
-    return doc.id
 
 
 def build_proposals(
