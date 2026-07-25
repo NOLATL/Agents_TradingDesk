@@ -148,3 +148,61 @@ class ReportSummary(BaseModel):
     executive_summary: str = Field(
         description="3-5 sentences summarizing ONLY the provided objects; no new claims"
     )
+
+
+# ---- Report Assembler long-form narrative (deep-dive report v2) ----------- #
+# Word targets live in reporting/narrative_guard.SECTION_TARGETS and the
+# narrator prompt; max_length here is only a JSON-runaway guard.
+
+class SectionDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(max_length=10000)
+
+
+class CompanyNarrative(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    narrative: str = Field(max_length=8000, description=(
+        "300-500 word narrative: why this name, what the filings show,"
+        " comparison to the other names, what would falsify — citing [^A###]"))
+
+
+class ReportNarrative(BaseModel):
+    """Assembled narrative — fields are None when that section was dropped
+    (guard violations exhausted retries) and the renderer falls back to the
+    deterministic layout for it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lead: str | None = None
+    thesis_narrative: str | None = None
+    macro_narrative: str | None = None
+    company_narratives: list[CompanyNarrative] = Field(default_factory=list)
+    valuation_discussion: str | None = None
+    forecast_rationale: str | None = None
+    risk_discussion: str | None = None
+    monitoring_outlook: str | None = None
+
+
+class NarrativeContext(BaseModel):
+    """Everything the narrator may restate — also the guard's ground truth."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    theme_title: str | None = None
+    theme_description: str | None = None
+    verdict: str | None = None
+    causal_chain: str
+    valuation_check: str
+    do_nothing_case: str | None = None
+    challenges: list[str] = Field(default_factory=list)
+    price_narrative_check: str | None = None
+    basket: list[dict] = Field(default_factory=list)
+    claims: list[dict] = Field(default_factory=list)
+    metrics: list[dict] = Field(default_factory=list)
+    macro: list[dict] = Field(default_factory=list)
+    forecasts: list[dict] = Field(default_factory=list)
+    milestones: list[dict] = Field(default_factory=list)
+    exit_criteria: dict[str, str] = Field(default_factory=dict)

@@ -71,8 +71,10 @@ def _log_usage(model: str, usage) -> None:
         }) + "\n")
 
 
-def review(kind: str, artifact: str, context: str) -> ReviewVerdict:
-    """One Sonnet audit of one generated artifact."""
+def review(kind: str, artifact: str, context: str, *,
+           artifact_cap: int = 20000, context_cap: int = 12000) -> ReviewVerdict:
+    """One Sonnet audit of one generated artifact. Default caps fit short
+    research artifacts; long-form callers (deep-dive narrative) raise them."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise ReviewUnavailable("ANTHROPIC_API_KEY not set — review gate offline")
     client = anthropic.Anthropic()
@@ -84,8 +86,8 @@ def review(kind: str, artifact: str, context: str) -> ReviewVerdict:
             "role": "user",
             "content": (
                 f"ARTIFACT KIND: {kind}\n\n"
-                f"CONTEXT THE GENERATOR WAS GIVEN:\n{context[:12000]}\n\n"
-                f"ARTIFACT TO AUDIT:\n{artifact[:20000]}"
+                f"CONTEXT THE GENERATOR WAS GIVEN:\n{context[:context_cap]}\n\n"
+                f"ARTIFACT TO AUDIT:\n{artifact[:artifact_cap]}"
             ),
         }],
         output_format=ReviewVerdict,
