@@ -107,6 +107,9 @@ You are a stylist over verified objects, NOT an author of facts. Hard rules:
 3. Mention only the basket's ticker symbols. Never introduce another ticker.
 4. Probabilities are the desk's measurement instrument: quote them only as recorded, never
    invent or re-derive one.
+4b. Price-derived metrics (momentum, volatility) are the REVIEWER's evidence: discuss them
+   only in the context of the reviewer's price-narrative concern, citing their own ids —
+   never as a reason a name is ranked where it is.
 5. Do not restate or soften the reviewer's challenges — they appear verbatim elsewhere in the
    report. You may engage with what they imply.
 Your output is validated mechanically: any unlisted number, unknown footnote id, foreign
@@ -159,9 +162,10 @@ def context_from_run(
     reviewer_output: ReviewerOutput,
 ) -> NarrativeContext:
     """In-memory objects → the narrator's (and guard's) ground truth.
-    Quarantined price metrics are deliberately absent — the narrator, like the
-    analyst, never sees them (invariant 5); the reviewer's prose may cite them
-    and that prose is part of the corpus."""
+    Quarantined price metrics are included as citable reviewer-domain
+    evidence (their ids give the narrator something real to cite when restating
+    the reviewer's price commentary); invariant 5 still holds — they were
+    never analyst inputs and justify no ranking."""
     series: dict[str, dict] = {}
     for p in pkt.macro:
         s = series.setdefault(p.series_id, {
@@ -199,6 +203,11 @@ def context_from_run(
             "metric": m.name,
             "value": float(m.value) if m.value is not None else None,
         } for m in pkt.metrics],
+        quarantined_metrics=[{
+            "assertion_id": m.assertion_id, "symbol": m.symbol,
+            "metric": m.name,
+            "value": float(m.value) if m.value is not None else None,
+        } for m in pkt.quarantined_metrics],
         macro=list(series.values()),
         forecasts=[{
             "statement": f.statement,
@@ -239,6 +248,13 @@ def serialize_context(ctx: NarrativeContext) -> str:
     for m in ctx.metrics:
         out.append(f"  [A{m['assertion_id']}] {m['symbol']}"
                    f" {m['metric']} = {m['value']}")
+    if ctx.quarantined_metrics:
+        out.append("PRICE-DERIVED METRICS (reviewer-only; the analyst never"
+                   " saw these and they justify no ranking — cite by id when"
+                   " restating the reviewer's price commentary):")
+        for m in ctx.quarantined_metrics:
+            out.append(f"  [A{m['assertion_id']}] {m['symbol']}"
+                       f" {m['metric']} = {m['value']}")
     if ctx.macro:
         out.append("MACRO SERIES (12-obs summaries; cite by id):")
         for s in ctx.macro:
@@ -503,7 +519,7 @@ def _review_once(text: str, shared: str, notes: list[str]):
             # verdict; the marginal Sonnet cost is accepted.
             return review_gate.review(
                 "deepdive_narrative", text, shared,
-                artifact_cap=200_000, context_cap=100_000, max_tokens=8000,
+                artifact_cap=200_000, context_cap=100_000, max_tokens=16000,
                 system=NARRATIVE_AUDIT_SYSTEM,
                 output_format=NarrativeAuditVerdict)
         except review_gate.ReviewUnavailable as e:

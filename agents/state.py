@@ -218,6 +218,12 @@ class NarrativeContext(BaseModel):
     basket: list[dict] = Field(default_factory=list)
     claims: list[dict] = Field(default_factory=list)
     metrics: list[dict] = Field(default_factory=list)
+    # Reviewer-domain price metrics (momentum/volatility). Invariant 5 bars
+    # them from ANALYST context and basket construction; the report already
+    # displays them labeled reviewer-only (human decision 2026-07-25), and
+    # giving the narrator their real assertion ids prevents it mis-citing
+    # backlog assertions when restating the reviewer's price commentary.
+    quarantined_metrics: list[dict] = Field(default_factory=list)
     macro: list[dict] = Field(default_factory=list)
     forecasts: list[dict] = Field(default_factory=list)
     milestones: list[dict] = Field(default_factory=list)

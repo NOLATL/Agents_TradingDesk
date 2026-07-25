@@ -24,8 +24,8 @@ from schemas.models import Thesis
 def context_from_bundle(bundle: deepdive.DiveBundle,
                         thesis: Thesis) -> NarrativeContext:
     """DiveBundle (rehydrated assertions) → NarrativeContext. Quarantined
-    price metrics are deliberately excluded — the narrator never sees them
-    (invariant 5); reviewer prose in the audit may cite them and is corpus."""
+    price metrics ride along as citable reviewer-domain evidence (see
+    reporter.context_from_run) — never as ranking justification."""
     audit = bundle.audit or {}
     series = []
     for sid, obs in deepdive._macro_series(bundle.macro).items():
@@ -61,6 +61,10 @@ def context_from_bundle(bundle: deepdive.DiveBundle,
             "assertion_id": a.id, "symbol": a.value.get("symbol"),
             "metric": a.value.get("metric"), "value": a.value.get("value"),
         } for a in bundle.metrics],
+        quarantined_metrics=[{
+            "assertion_id": a.id, "symbol": a.value.get("symbol"),
+            "metric": a.value.get("metric"), "value": a.value.get("value"),
+        } for a in bundle.quarantined],
         macro=series,
         forecasts=[{
             "statement": f.statement,

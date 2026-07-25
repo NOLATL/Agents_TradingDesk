@@ -45,6 +45,8 @@ def make_ctx(**over):
                      "falsification_criterion": "two guidance cuts"}],
         exit_criteria={"TIME_STOP": "2027-12-31"},
         price_narrative_check="momentum is not driving this narrative",
+        quarantined_metrics=[{"assertion_id": 401, "symbol": "PWR",
+                              "metric": "momentum_12_1", "value": 0.7741}],
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -198,6 +200,13 @@ def test_prose_quoted_number_truncated_passes():
                      allow=allow)  # rounded form passes too
     v = check("Volatility of 0.736 is elevated. [^A299]", allow=allow)
     assert kinds(v) == {"UNKNOWN_NUMBER"}  # neither rounding nor truncation
+
+
+def test_quarantined_metric_citable_and_restatable():
+    # reviewer-domain price metrics carry real ids the narrator may cite
+    assert not check("The reviewer flags PWR momentum of 0.77. [^A401]")
+    v = check("Momentum of 0.77 concerns the reviewer. [^A402]")
+    assert "UNKNOWN_FOOTNOTE" in kinds(v)  # unknown id still rejected
 
 
 def test_identifier_digits_are_not_numeric_claims():

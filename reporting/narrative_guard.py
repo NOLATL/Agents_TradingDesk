@@ -115,7 +115,8 @@ def build_allowlist(ctx) -> Allowlist:
                 values.add(v * 1e3)
             if "percent" in unit_l:
                 values.add(v / 100)
-    for m in ctx.metrics or []:
+    for m in list(ctx.metrics or []) + list(
+            getattr(ctx, "quarantined_metrics", None) or []):
         ids.add(m["assertion_id"])
         if m.get("symbol"):
             symbols.add(str(m["symbol"]).upper())
