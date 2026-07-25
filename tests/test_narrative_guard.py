@@ -163,3 +163,22 @@ def test_normalize_marker_variants():
 
 def test_normalize_leaves_unknown_ids_alone():
     assert ng.normalize_markers("A777 stays bare.", {299}) == "A777 stays bare."
+
+
+def test_normalize_compound_citation_groups():
+    ids = {12, 34}
+    assert (ng.normalize_markers("Backlog grew. [^A12, ^A34]", ids)
+            == "Backlog grew. [^A12][^A34]")
+    assert (ng.normalize_markers("Backlog grew. [A12; A34]", ids)
+            == "Backlog grew. [^A12][^A34]")
+    assert (ng.normalize_markers("Backlog grew. (A12, A34)", ids)
+            == "Backlog grew. [^A12][^A34]")
+    assert ng.normalize_markers("Backlog grew. ^A12", ids) \
+        == "Backlog grew. [^A12]"
+
+
+def test_identifier_digits_are_not_numeric_claims():
+    # a bare unknown id (or Q4-style token) must not fire UNKNOWN_NUMBER —
+    # citation correctness is the footnote checks' and Sonnet's job
+    v = check("As noted in A999999 during Q4 the story holds. [^A299]")
+    assert "UNKNOWN_NUMBER" not in kinds(v)

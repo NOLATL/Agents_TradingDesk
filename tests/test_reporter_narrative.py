@@ -176,6 +176,22 @@ def test_sonnet_offline_accepted_with_note(conn, monkeypatch):
         raise psycopg.Rollback
 
 
+def test_unparseable_audit_never_publishes(conn, monkeypatch):
+    """A truncated/unreadable verdict is NOT approval — the gate may have
+    been mid-rejection. Wholesale fallback, nothing persisted."""
+    stub_calls(monkeypatch, lambda prompt, i: GOOD_TEXT)
+
+    def truncated(*a, **k):
+        raise reporter.review_gate.ReviewParseError("EOF while parsing")
+    monkeypatch.setattr(reporter.review_gate, "review", truncated)
+    with conn.transaction():
+        narrative, notes = run_narrate(conn)
+        assert narrative is None
+        assert narrative_row(conn) is None
+        assert any("unparseable" in x for x in notes)
+        raise psycopg.Rollback
+
+
 def test_sonnet_reject_regenerates_only_named_section(conn, monkeypatch):
     calls = stub_calls(monkeypatch, lambda prompt, i: GOOD_TEXT)
     verdicts = iter([

@@ -159,15 +159,29 @@ def build_allowlist(ctx) -> Allowlist:
 
 def normalize_markers(text: str, allowed_ids: set[int] | frozenset[int]) -> str:
     """Rewrite the marker variants qwen tends to emit — `A123`, `[A123]`,
-    `(A123)`, `[^A123]` — into canonical `[^A123]`, but ONLY for ids in the
-    allowlist. A formatting transform of an already-validated id, never a
+    `(A123)`, `^A123`, `[^A123]`, and compound groups like `[^A1, ^A2]` or
+    `[A1; A2]` — into canonical `[^A123]` markers, but ONLY for ids in the
+    allowlist. A formatting transform of already-validated ids, never a
     content edit."""
+    def marker(aid: int, original: str) -> str:
+        return f"[^A{aid}]" if aid in allowed_ids else original
+
+    def expand_group(m: re.Match) -> str:
+        ids = [int(x) for x in re.findall(r"A(\d+)", m.group(0))]
+        if ids and all(i in allowed_ids for i in ids):
+            return "".join(f"[^A{i}]" for i in ids)
+        return m.group(0)
+
+    # compound citation groups first: [^A1, ^A2], [A1; A2], (A1, A2)
+    text = re.sub(r"[\[(]\s*(?:\^?A\d+\s*[,;]\s*)+\^?A\d+\s*[\])]",
+                  expand_group, text)
+
     def sub(m: re.Match) -> str:
-        aid = int(m.group(1))
-        return f"[^A{aid}]" if aid in allowed_ids else m.group(0)
+        return marker(int(m.group(1)), m.group(0))
 
     text = re.sub(r"\[\^?A(\d+)\]", sub, text)
     text = re.sub(r"\(A(\d+)\)", sub, text)
+    text = re.sub(r"(?<!\[)\^A(\d+)\b", sub, text)
     text = re.sub(r"(?<!\[\^)\bA(\d+)\b(?!\])", sub, text)
     # collapse doubled brackets a chained rewrite could produce
     return text.replace("[^[^", "[^").replace("]]", "]")
@@ -266,6 +280,11 @@ def check_text(
 
     for m in NUMBER_RE.finditer(stripped):
         tok = m.group(0)
+        # digits glued to a letter/caret are part of an identifier (A1419,
+        # Q4, ^A12) — not a numeric claim; footnote checks govern ids
+        if m.start() > 0 and (stripped[m.start() - 1].isalpha()
+                              or stripped[m.start() - 1] == "^"):
+            continue
         after = stripped[m.end():]
         bare = tok.replace("$", "").replace(",", "").strip()
         if (bare.isdigit() and int(bare) <= 60 and "$" not in tok

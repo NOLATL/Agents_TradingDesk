@@ -91,9 +91,14 @@ You are a stylist over verified objects, NOT an author of facts. Hard rules:
 1. Every fact, figure, and event you mention MUST come from the provided objects. You may
    restate a number exactly or round it to FEWER significant digits ("$1,183.0 million" may
    become "about $1.2bn"). You may NEVER produce a number, date, company, product, program,
-   or event that is not in the objects.
+   or event that is not in the objects — and you may NEVER derive figures yourself: no
+   growth rates, percentage changes, sums, differences, ratios, or averages of your own
+   computation. Describe direction and magnitude in words instead ("roughly doubled",
+   "well above").
 2. Cite as you write: immediately after each factual statement, place the footnote marker of
-   the supporting assertion, exactly like [^A1454]. Use only the assertion ids provided.
+   the supporting assertion, exactly like [^A1454]. One marker per bracket — write
+   [^A1454][^A1455], never [^A1454, A1455]. Never mention an assertion id as a bare number
+   in prose. Use only the assertion ids provided.
 3. Mention only the basket's ticker symbols. Never introduce another ticker.
 4. Probabilities are the desk's measurement instrument: quote them only as recorded, never
    invent or re-derive one.
@@ -444,22 +449,42 @@ def _narrate_inner(conn, ctx, thesis, experiment_id, clock,
     return n, notes
 
 
-def _audit(conn, n, ctx, shared, allow, known, experiment_id,
-           dropped, notes) -> str:
-    """One Sonnet audit of the assembled narrative; a REJECT regenerates only
-    the sections it names (one attempt each) and re-audits once. Offline gate
-    degrades to deterministic-checks-only with a loud note."""
-    for round_no in (1, 2):
+def _review_once(text: str, shared: str, notes: list[str]):
+    """One gate call with a single retry on an unparseable verdict. Returns a
+    ReviewVerdict, or a status string: 'skipped (…)' when the gate is
+    offline/erroring (deterministic checks stand alone, loudly), or
+    'unparseable' when the gate responded but its verdict could not be read
+    twice — which must NOT be treated as approval."""
+    for attempt in (1, 2):
         try:
-            verdict = review_gate.review(
-                "deepdive_narrative", narrative_text(n), shared,
-                artifact_cap=80000, context_cap=30000)
+            return review_gate.review(
+                "deepdive_narrative", text, shared,
+                artifact_cap=80000, context_cap=30000, max_tokens=4000)
         except review_gate.ReviewUnavailable as e:
             notes.append(f"Sonnet audit skipped ({e}) — deterministic checks only")
             return f"skipped ({e})"
         except anthropic.APIError as e:
             notes.append(f"Sonnet audit skipped (API error: {e})")
             return "skipped (api error)"
+        except review_gate.ReviewParseError as e:
+            if attempt == 2:
+                notes.append("Sonnet audit verdict unparseable twice — the"
+                             " narrative is unreviewed and will not be"
+                             f" published ({e})")
+    return "unparseable"
+
+
+def _audit(conn, n, ctx, shared, allow, known, experiment_id,
+           dropped, notes) -> str:
+    """One Sonnet audit of the assembled narrative; a REJECT regenerates only
+    the sections it names (one attempt each) and re-audits once. Offline gate
+    degrades to deterministic-checks-only with a loud note; an unreadable
+    verdict (not offline — the gate may have been mid-rejection) falls back
+    wholesale rather than publishing unreviewed prose."""
+    for round_no in (1, 2):
+        verdict = _review_once(narrative_text(n), shared, notes)
+        if isinstance(verdict, str):
+            return "rejected-wholesale" if verdict == "unparseable" else verdict
         if verdict.approve:
             return "approved"
         named = _sections_named_in(verdict.critique, n)
