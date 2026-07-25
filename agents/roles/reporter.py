@@ -397,20 +397,41 @@ def _drop_sections(n: ReportNarrative, names: list[str]) -> None:
             setattr(n, name, None)
 
 
+def expected_sections(ctx: NarrativeContext) -> list[str]:
+    out = ["lead", "thesis_narrative"]
+    if ctx.macro:
+        out.append("macro_narrative")
+    out += [f"company:{r.get('symbol')}" for r in ctx.basket if r.get("symbol")]
+    out += ["valuation_discussion", "forecast_rationale",
+            "risk_discussion", "monitoring_outlook"]
+    return out
+
+
+def missing_sections(n: ReportNarrative, ctx: NarrativeContext) -> list[str]:
+    have = {f"company:{c.symbol}" for c in n.company_narratives}
+    have |= {name for name in ("lead", "thesis_narrative", "macro_narrative",
+                               "valuation_discussion", "forecast_rationale",
+                               "risk_discussion", "monitoring_outlook")
+             if getattr(n, name)}
+    return [s for s in expected_sections(ctx) if s not in have]
+
+
 def narrate(
     conn, ctx: NarrativeContext, thesis: Thesis, experiment_id: int,
     clock: datetime, *, max_attempts: int = 3, sonnet_audit: bool = True,
-    commit: bool = True,
+    commit: bool = True, base: ReportNarrative | None = None,
 ) -> tuple[ReportNarrative | None, list[str]]:
     """Long-form narrative for the deep-dive report: per-section generation,
-    mechanical validation, one Sonnet audit of the assembled whole, persisted
-    as a single JUDGMENT assertion kind='report_narrative'. Never raises —
-    a narrative failure must never fail the Friday cycle; the renderer falls
-    back to the deterministic layout for anything missing."""
+    mechanical validation, one Sonnet audit, persisted as a single JUDGMENT
+    assertion kind='report_narrative'. With `base` (repair mode), sections
+    already present are KEPT verbatim — only missing ones are generated and
+    only the new material is audited, so progress across runs is monotone.
+    Never raises — a narrative failure must never fail the Friday cycle; the
+    renderer falls back to the deterministic layout for anything missing."""
     notes: list[str] = []
     try:
         return _narrate_inner(conn, ctx, thesis, experiment_id, clock,
-                              max_attempts, sonnet_audit, commit, notes)
+                              max_attempts, sonnet_audit, commit, notes, base)
     except Exception as e:  # noqa: BLE001 — cycle safety over completeness
         notes.append(f"narrative generation failed ({type(e).__name__}: {e})"
                      " — report falls back to deterministic layout")
@@ -418,7 +439,7 @@ def narrate(
 
 
 def _narrate_inner(conn, ctx, thesis, experiment_id, clock,
-                   max_attempts, sonnet_audit, commit, notes):
+                   max_attempts, sonnet_audit, commit, notes, base=None):
     allow = guard.build_allowlist(ctx)
     known = _known_symbols(conn)
     shared = serialize_context(ctx)
@@ -428,10 +449,14 @@ def _narrate_inner(conn, ctx, thesis, experiment_id, clock,
     all_claim_ids = [c["assertion_id"] for c in ctx.claims]
     macro_ids = [i for s in ctx.macro for i in s.get("assertion_ids", [])]
 
-    n = ReportNarrative()
+    n = base.model_copy(deep=True) if base else ReportNarrative()
+    wanted = set(missing_sections(n, ctx))
+    staging = ReportNarrative()  # this run's new sections — audited alone
     dropped: list[str] = []
 
     def gen(name, target_key, instruction, suggest_ids, require_marker=True):
+        if name not in wanted:
+            return None
         text, note = _gen_section(
             conn, name=name, target_key=target_key, instruction=instruction,
             shared=shared, allow=allow, known=known,
@@ -442,15 +467,14 @@ def _narrate_inner(conn, ctx, thesis, experiment_id, clock,
             notes.append(note)
         return text
 
-    n.lead = gen("lead", "lead", _SECTION_INSTRUCTIONS["lead"],
-                 all_claim_ids, require_marker=False)
-    n.thesis_narrative = gen("thesis_narrative", "thesis_narrative",
-                             _SECTION_INSTRUCTIONS["thesis_narrative"],
-                             all_claim_ids)
-    if ctx.macro:
-        n.macro_narrative = gen("macro_narrative", "macro_narrative",
-                                _SECTION_INSTRUCTIONS["macro_narrative"],
-                                macro_ids)
+    staging.lead = gen("lead", "lead", _SECTION_INSTRUCTIONS["lead"],
+                       all_claim_ids, require_marker=False)
+    staging.thesis_narrative = gen(
+        "thesis_narrative", "thesis_narrative",
+        _SECTION_INSTRUCTIONS["thesis_narrative"], all_claim_ids)
+    staging.macro_narrative = gen(
+        "macro_narrative", "macro_narrative",
+        _SECTION_INSTRUCTIONS["macro_narrative"], macro_ids)
     for r in ctx.basket:
         sym = r.get("symbol")
         ids = claim_ids_by_symbol.get(sym, []) + \
@@ -458,32 +482,54 @@ def _narrate_inner(conn, ctx, thesis, experiment_id, clock,
         text = gen(f"company:{sym}", "company",
                    _SECTION_INSTRUCTIONS["company"].format(symbol=sym), ids)
         if text:
-            n.company_narratives.append(
+            staging.company_narratives.append(
                 CompanyNarrative(symbol=sym, narrative=text))
-    n.valuation_discussion = gen(
+    staging.valuation_discussion = gen(
         "valuation_discussion", "valuation_discussion",
         _SECTION_INSTRUCTIONS["valuation_discussion"], all_claim_ids)
-    n.forecast_rationale = gen(
+    staging.forecast_rationale = gen(
         "forecast_rationale", "forecast_rationale",
         _SECTION_INSTRUCTIONS["forecast_rationale"], all_claim_ids)
-    n.risk_discussion = gen(
+    staging.risk_discussion = gen(
         "risk_discussion", "risk_discussion",
         _SECTION_INSTRUCTIONS["risk_discussion"], all_claim_ids)
-    n.monitoring_outlook = gen(
+    staging.monitoring_outlook = gen(
         "monitoring_outlook", "monitoring_outlook",
         _SECTION_INSTRUCTIONS["monitoring_outlook"], all_claim_ids)
 
-    if not narrative_text(n):
+    if base is not None and not narrative_text(staging):
+        notes.append("repair generated no surviving new sections — keeping"
+                     " the existing narrative untouched")
+        return base, notes
+    if not narrative_text(staging) and not narrative_text(n):
         notes.append("every narrative section failed validation — nothing"
                      " persisted; report falls back to deterministic layout")
         return None, notes
 
     audit_status = "skipped (disabled)"
-    if sonnet_audit:
-        audit_status = _audit(conn, n, ctx, shared, allow, known,
+    if sonnet_audit and narrative_text(staging):
+        audit_status = _audit(conn, staging, ctx, shared, allow, known,
                               experiment_id, dropped, notes)
         if audit_status == "rejected-wholesale":
+            if base is not None:
+                notes.append("repair sections all rejected by audit —"
+                             " keeping the existing narrative untouched")
+                return base, notes
             return None, notes
+
+    # merge this run's surviving new sections into the kept base
+    for name in ("lead", "thesis_narrative", "macro_narrative",
+                 "valuation_discussion", "forecast_rationale",
+                 "risk_discussion", "monitoring_outlook"):
+        if getattr(staging, name):
+            setattr(n, name, getattr(staging, name))
+    have = {c.symbol for c in n.company_narratives}
+    n.company_narratives.extend(
+        c for c in staging.company_narratives if c.symbol not in have)
+    order = {r.get("symbol"): i for i, r in enumerate(ctx.basket)}
+    n.company_narratives.sort(key=lambda c: order.get(c.symbol, 99))
+    if base is not None:
+        audit_status = f"repair: {audit_status}"
 
     body_words = guard.body_word_count(narrative_text(n))
     repo.insert_assertion(conn, Assertion(

@@ -177,6 +177,29 @@ def test_sonnet_offline_accepted_with_note(conn, monkeypatch):
         raise psycopg.Rollback
 
 
+def test_repair_keeps_existing_sections_and_fills_missing(conn, monkeypatch):
+    from agents.state import CompanyNarrative, ReportNarrative
+    calls = stub_calls(monkeypatch, lambda prompt, i: GOOD_TEXT)
+    approve_all(monkeypatch)
+    base = ReportNarrative(
+        lead="KEEP THIS LEAD.",
+        thesis_narrative="KEEP THIS THESIS. [^A299]",
+        company_narratives=[CompanyNarrative(
+            symbol="PWR", narrative="KEEP PWR. [^A299]")],
+    )
+    with conn.transaction():
+        narrative, _ = run_narrate(conn, base=base)
+        assert narrative.lead == "KEEP THIS LEAD."
+        assert narrative.thesis_narrative == "KEEP THIS THESIS. [^A299]"
+        assert narrative.company_narratives[0].narrative == "KEEP PWR. [^A299]"
+        assert narrative.valuation_discussion == GOOD_TEXT  # filled in
+        assert narrative.monitoring_outlook == GOOD_TEXT
+        # only the 4 missing prose sections were generated
+        assert len(calls) == 4
+        assert narrative_row(conn)[0]["audit"].startswith("repair:")
+        raise psycopg.Rollback
+
+
 def test_unparseable_audit_never_publishes(conn, monkeypatch):
     """A truncated/unreadable verdict is NOT approval — the gate may have
     been mid-rejection. Wholesale fallback, nothing persisted."""

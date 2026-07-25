@@ -14,7 +14,7 @@ import argparse
 from datetime import date, datetime, timezone
 
 from agents.roles import reporter
-from agents.state import NarrativeContext
+from agents.state import NarrativeContext, ReportNarrative
 from data import repository as repo
 from data.db import connect
 from reporting import deepdive, packet
@@ -83,7 +83,8 @@ def context_from_bundle(bundle: deepdive.DiveBundle,
 
 
 def backfill(week_key: str, thesis_id: int | None = None,
-             force: bool = False, sonnet_audit: bool = True) -> int:
+             force: bool = False, sonnet_audit: bool = True,
+             repair: bool = False, repair_passes: int = 3) -> int:
     year, week = (int(p) for p in week_key.replace("W", "").split("-"))
     start = date.fromisocalendar(year, week, 1)
     end = date.fromisocalendar(year, week, 7)
@@ -96,9 +97,10 @@ def backfill(week_key: str, thesis_id: int | None = None,
             where += " AND id = %s"
             params += (thesis_id,)
         for thesis in repo.fetch(conn, Thesis, where + " ORDER BY id", params):
-            if deepdive.has_narrative(conn, thesis.id) and not force:
+            if deepdive.has_narrative(conn, thesis.id) and not (force or repair):
                 print(f"thesis #{thesis.id} ({thesis.strategy_tag}) already"
-                      " has a narrative — skipping (use --force to regenerate)")
+                      " has a narrative — skipping (--force regenerates,"
+                      " --repair fills missing sections)")
                 continue
             print(f"thesis #{thesis.id} ({thesis.strategy_tag}):"
                   " rehydrating …")
@@ -107,13 +109,36 @@ def backfill(week_key: str, thesis_id: int | None = None,
             print(f"  {len(ctx.claims)} claims, {len(ctx.metrics)} metrics,"
                   f" {len(ctx.macro)} macro series,"
                   f" {len(ctx.forecasts)} forecasts — narrating …")
-            narrative, notes = reporter.narrate(
-                conn, ctx, thesis, thesis.experiment_id,
-                datetime.now(timezone.utc), sonnet_audit=sonnet_audit)
-            for note in notes:
-                print(f"  ⚠ {note}")
-            if narrative is None:
-                print("  narrative failed — report keeps deterministic layout")
+            base = None
+            if repair:
+                stored = (bundle.narrative or {}).get("narrative")
+                base = ReportNarrative(**stored) if stored else None
+            passes = repair_passes if repair else 1
+            for pass_no in range(1, passes + 1):
+                if repair:
+                    missing = reporter.missing_sections(
+                        base or ReportNarrative(), ctx)
+                    if not missing:
+                        print("  narrative complete — nothing to repair")
+                        break
+                    print(f"  repair pass {pass_no}: missing"
+                          f" [{', '.join(missing)}]")
+                narrative, notes = reporter.narrate(
+                    conn, ctx, thesis, thesis.experiment_id,
+                    datetime.now(timezone.utc), sonnet_audit=sonnet_audit,
+                    base=base)
+                for note in notes:
+                    print(f"  ⚠ {note}")
+                if narrative is None:
+                    print("  narrative failed — report keeps prior/deterministic layout")
+                    break
+                if repair and base is not None and reporter.narrative_text(
+                        narrative) == reporter.narrative_text(base):
+                    print("  repair made no progress — stopping")
+                    break
+                base = narrative
+                if not repair:
+                    break
             paths = deepdive.write(
                 conn, thesis, week_key,
                 packet.latest_doc_id(conn, thesis.strategy_tag))
@@ -129,9 +154,12 @@ if __name__ == "__main__":
     parser.add_argument("--thesis", type=int, default=None)
     parser.add_argument("--force", action="store_true",
                         help="regenerate even if a narrative already exists")
+    parser.add_argument("--repair", action="store_true",
+                        help="keep existing sections, generate only missing"
+                             " ones (monotone progress; up to 3 passes)")
     parser.add_argument("--no-audit", action="store_true",
                         help="skip the Sonnet audit gate")
     args = parser.parse_args()
     count = backfill(args.week_key, thesis_id=args.thesis, force=args.force,
-                     sonnet_audit=not args.no_audit)
+                     sonnet_audit=not args.no_audit, repair=args.repair)
     print(f"backfilled {count} dive(s) for {args.week_key}")
