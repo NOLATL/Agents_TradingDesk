@@ -177,6 +177,19 @@ def test_normalize_compound_citation_groups():
         == "Backlog grew. [^A12]"
 
 
+def test_prose_quoted_number_truncated_passes():
+    """W30 regression: the reviewer's prose said volatility 0.737831; the
+    narrator wrote 0.737 (truncation, not rounding) — must pass."""
+    ctx = make_ctx(challenges=["AVAV volatility 0.737831 is elevated"])
+    allow = ng.build_allowlist(ctx)
+    assert not check("AVAV's volatility of 0.737 is elevated. [^A299]",
+                     allow=allow)
+    assert not check("Volatility near 0.74 remains high. [^A299]",
+                     allow=allow)  # rounded form passes too
+    v = check("Volatility of 0.736 is elevated. [^A299]", allow=allow)
+    assert kinds(v) == {"UNKNOWN_NUMBER"}  # neither rounding nor truncation
+
+
 def test_identifier_digits_are_not_numeric_claims():
     # a bare unknown id (or Q4-style token) must not fire UNKNOWN_NUMBER —
     # citation correctness is the footnote checks' and Sonnet's job

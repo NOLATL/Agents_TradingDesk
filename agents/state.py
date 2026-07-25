@@ -188,6 +188,20 @@ class ReportNarrative(BaseModel):
     monitoring_outlook: str | None = None
 
 
+class NarrativeAuditVerdict(BaseModel):
+    """Sonnet's structured verdict on an assembled deep-dive narrative —
+    failing sections are named by their exact labels so the pipeline
+    regenerates precisely, no critique-text sniffing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
+    failing_sections: list[str] = Field(
+        default_factory=list,
+        description="exact labels of failing sections (empty when approving)")
+    critique: str
+
+
 class NarrativeContext(BaseModel):
     """Everything the narrator may restate — also the guard's ground truth."""
 

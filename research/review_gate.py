@@ -79,15 +79,18 @@ def _log_usage(model: str, usage) -> None:
 
 def review(kind: str, artifact: str, context: str, *,
            artifact_cap: int = 20000, context_cap: int = 12000,
-           max_tokens: int = 4000) -> ReviewVerdict:
+           max_tokens: int = 4000, system: str | None = None,
+           output_format: type = ReviewVerdict):
     """One Sonnet audit of one generated artifact. Default caps fit short
-    research artifacts; long-form callers (deep-dive narrative) raise them."""
+    research artifacts; long-form callers (deep-dive narrative) raise them
+    and may supply a kind-specific system rubric + structured verdict."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise ReviewUnavailable("ANTHROPIC_API_KEY not set — review gate offline")
     client = anthropic.Anthropic()
     try:
         response = _parse_call(client, kind, artifact, context,
-                               artifact_cap, context_cap, max_tokens)
+                               artifact_cap, context_cap, max_tokens,
+                               system or REVIEW_SYSTEM, output_format)
     except anthropic.APIError:
         raise
     except Exception as e:  # pydantic ValidationError on truncated JSON etc.
@@ -100,11 +103,11 @@ def review(kind: str, artifact: str, context: str, *,
 
 
 def _parse_call(client, kind, artifact, context, artifact_cap, context_cap,
-                max_tokens):
+                max_tokens, system, output_format):
     return client.messages.parse(
         model=REVIEW_MODEL,
         max_tokens=max_tokens,
-        system=REVIEW_SYSTEM,
+        system=system,
         messages=[{
             "role": "user",
             "content": (
@@ -113,7 +116,7 @@ def _parse_call(client, kind, artifact, context, artifact_cap, context_cap,
                 f"ARTIFACT TO AUDIT:\n{artifact[:artifact_cap]}"
             ),
         }],
-        output_format=ReviewVerdict,
+        output_format=output_format,
     )
 
 

@@ -145,8 +145,17 @@ def build_allowlist(ctx) -> Allowlist:
         corpus_parts.append(str(v))
 
     symbols.discard("")
+    corpus = _normalize(" ".join(corpus_parts))
+    # Every number quoted in prose the narrator saw (reviewer challenges,
+    # claims, quotes …) is restatable — add them as canonical values so the
+    # rounding/truncation lattice covers "0.737" for a corpus "0.737831".
+    for tok in re.findall(r"\d+(?:\.\d+)?", corpus):
+        try:
+            values.add(float(tok))
+        except ValueError:  # pragma: no cover — regex guarantees floatable
+            pass
     return Allowlist(
-        corpus=_normalize(" ".join(corpus_parts)),
+        corpus=corpus,
         values=tuple(values),
         allowed_ids=frozenset(ids),
         allowed_symbols=frozenset(symbols),
@@ -208,6 +217,15 @@ def _round_sig(v: float, d: int) -> float:
     return round(v, d - 1 - int(math.floor(math.log10(abs(v)))))
 
 
+def _trunc_sig(v: float, d: int) -> float:
+    """Truncate (not round) to d significant digits — humans quote
+    0.737831 as both 0.738 (rounded) and 0.737 (truncated)."""
+    if v == 0:
+        return 0.0
+    scale = 10 ** (d - 1 - int(math.floor(math.log10(abs(v)))))
+    return math.floor(abs(v) * scale) / scale
+
+
 def _token_ok(token: str, allow: Allowlist) -> bool:
     raw = token.strip()
     unit = None
@@ -243,7 +261,10 @@ def _token_ok(token: str, allow: Allowlist) -> bool:
         if d > _sig_digits(a):
             continue  # narrative may never ADD precision
         ra = _round_sig(abs(a), d)
-        if any(math.isclose(ra, _round_sig(c, d), rel_tol=1e-9) for c in candidates):
+        ta = _trunc_sig(abs(a), d)
+        if any(math.isclose(ra, _round_sig(c, d), rel_tol=1e-9)
+               or math.isclose(ta, _round_sig(c, d), rel_tol=1e-9)
+               for c in candidates):
             return True
     return False
 

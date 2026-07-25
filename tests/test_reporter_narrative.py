@@ -13,7 +13,8 @@ from agents.roles import reporter
 from agents.state import NarrativeContext, SectionDraft
 from data.db import dsn
 from data.migrate import migrate
-from research.review_gate import ReviewUnavailable, ReviewVerdict
+from agents.state import NarrativeAuditVerdict
+from research.review_gate import ReviewUnavailable
 from schemas.models import Thesis
 
 # 400+ words with no digits (satisfies every section floor), one valid marker.
@@ -85,7 +86,7 @@ def stub_calls(monkeypatch, responder):
 def approve_all(monkeypatch):
     monkeypatch.setattr(
         reporter.review_gate, "review",
-        lambda *a, **k: ReviewVerdict(approve=True, critique="ok"))
+        lambda *a, **k: NarrativeAuditVerdict(approve=True, critique="ok"))
 
 
 def run_narrate(conn, **kw):
@@ -195,9 +196,10 @@ def test_unparseable_audit_never_publishes(conn, monkeypatch):
 def test_sonnet_reject_regenerates_only_named_section(conn, monkeypatch):
     calls = stub_calls(monkeypatch, lambda prompt, i: GOOD_TEXT)
     verdicts = iter([
-        ReviewVerdict(approve=False,
-                      critique="the monitoring section overstates certainty"),
-        ReviewVerdict(approve=True, critique="ok"),
+        NarrativeAuditVerdict(approve=False,
+                              failing_sections=["monitoring_outlook"],
+                              critique="overstates certainty"),
+        NarrativeAuditVerdict(approve=True, critique="ok"),
     ])
     monkeypatch.setattr(reporter.review_gate, "review",
                         lambda *a, **k: next(verdicts))
