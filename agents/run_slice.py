@@ -92,6 +92,18 @@ def run(
         )
         packet_doc_id = packet_renderer.cache(conn, content, clock, theme=pkt.theme)
         print(f"      cached decision packet as documents #{packet_doc_id}")
+        # Long-form narrative for the deep-dive report. narrate() never
+        # raises (cycle safety) — on failure the report renders its
+        # deterministic fallback and the notes surface in the weekly notify.
+        print("      narrative …")
+        ctx = reporter.context_from_run(pkt, thesis_v2, analyst_out, review_out)
+        narrative, notes = reporter.narrate(
+            conn, ctx, thesis_v2, experiment.id, clock)
+        for note in notes:
+            print(f"      ⚠ {note}")
+        if narrative is not None:
+            print("      narrative persisted"
+                  f" ({len(narrative.company_narratives)} company sections)")
         return thesis_v2, packet_doc_id
 
 

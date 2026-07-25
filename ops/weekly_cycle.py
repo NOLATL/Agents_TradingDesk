@@ -219,6 +219,13 @@ def main(trigger: str = "timer") -> None:
                     " — see reports/deepdive/ for the challenges; those themes"
                     " retry next Friday"
                 )
+            fallbacks = [t.strategy_tag for t in survivors + rejected
+                         if not deepdive.has_narrative(conn, t.id)]
+            if fallbacks:
+                parts.append(
+                    "narrative fell back to deterministic layout for "
+                    + ", ".join(fallbacks)
+                )
             if parts:
                 notify(
                     "Decisions needed" if (pending or reviewed)
