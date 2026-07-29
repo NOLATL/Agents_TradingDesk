@@ -67,7 +67,10 @@ GROUNDING RULES (violations get the proposal rejected):
 - Tickers: US major-exchange listings only (NYSE/NASDAQ/AMEX) — no foreign listings, no OTC.
   If the pure-play is foreign-listed or OTC-only, drop it and note the gap. Only claim a
   company exposure the evidence supports; naming a ticker from memory is fine, describing
-  its business from memory is not.
+  its business from memory is not. Never assert that a company runs a specific program,
+  contract, or product line unless a cited evidence item or a provided company identity
+  says so — where the linkage is inferential, hedge it explicitly ("plausibly exposed via
+  its <business line> segment"), which is acceptable and honest.
 - Do NOT re-propose a recently rejected theme family unless you cite materially NEW evidence
   and say explicitly what changed.
 
@@ -292,10 +295,15 @@ def scout(conn, session: date | None = None) -> Theme | None:
     model_tag = SLICE["llm"].get("scout_model_tag", SLICE["llm"]["model_tag"])
 
     proposals: list[CandidateProposal] = []
+    refined = False
 
     def generate(critique: str | None) -> str:
         prompt = ctx.text
         if critique:
+            # Revisions also see the authoritative identities of the tickers
+            # they are revising — memory is not a valid source for exposure.
+            prompt += proposal_checks.symbol_identity_block(
+                conn, proposals[-1].symbols) if proposals else ""
             prompt += f"\n\nYOUR PREVIOUS PROPOSAL WAS REJECTED BY REVIEW:\n{critique}\nAddress the critique in a revised proposal."
         proposal = llm.structured_call(
             conn,
@@ -310,10 +318,36 @@ def scout(conn, session: date | None = None) -> Theme | None:
         return proposal.model_dump_json(indent=1)
 
     def precheck(_artifact: str) -> str | None:
-        return proposal_checks.precheck_proposal(
+        nonlocal refined
+        issues = proposal_checks.precheck_proposal(
             conn, proposals[-1], ctx.issued_ids, ctx.edgar_directions,
             session, len(ctx.text), model_tag,
         )
+        if issues is not None:
+            return issues
+        if not refined:
+            # One mandatory local refinement before the first Sonnet review:
+            # the generator finally sees its tickers' authoritative
+            # identities (it cannot before choosing them) and re-grounds
+            # every exposure claim. Free (local), and it targets the one
+            # failure mode the deterministic checks cannot catch — company
+            # facts recalled from memory (first observed 2026-07-29: NOC
+            # tied to THAAD, RTX to Patriot, neither in the evidence).
+            refined = True
+            block = proposal_checks.symbol_identity_block(
+                conn, proposals[-1].symbols)
+            if block:
+                return (
+                    "Deterministic validation passed. Before review, revise"
+                    " once more: re-ground each ticker's exposure claim"
+                    " strictly in the cited evidence or the authoritative"
+                    " company identities below. Remove or hedge any program,"
+                    " contract, or product claim that appears in neither"
+                    " (\"plausibly exposed via its <segment>\" is acceptable"
+                    " and honest). Keep everything else intact."
+                    + block
+                )
+        return None
 
     def review_context() -> str:
         # Evaluated at review time: base evidence plus the authoritative
@@ -326,7 +360,7 @@ def scout(conn, session: date | None = None) -> Theme | None:
 
     artifact, approved, critique = generate_with_review(
         generate, kind="candidate theme proposal (unified daily scout)",
-        context=review_context, precheck=precheck,
+        context=review_context, precheck=precheck, max_precheck_retries=3,
         system=SCOUT_REVIEW_SYSTEM, context_cap=40000,
         on_review=lambda ok, crit: proposal_checks.record_attempt(
             conn, session, "REVIEW", ok, crit, len(ctx.text), model_tag),

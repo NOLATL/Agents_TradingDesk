@@ -128,6 +128,38 @@ def test_unusable_slug_fails_loudly(conn, monkeypatch, mock_context):
         raise psycopg.Rollback
 
 
+def test_clean_proposal_gets_one_identity_refinement_pass(conn, monkeypatch, mock_context):
+    """A precheck-clean draft is regenerated exactly once with the tickers'
+    authoritative identities before the first Sonnet review (2026-07-29:
+    memory-recalled program claims were the last hallucination mode)."""
+    from research import proposal_checks
+
+    calls = []
+
+    def fake_llm(_conn, **kw):
+        calls.append(kw["user_prompt"])
+        return proposal(slug="ri-refined")
+
+    monkeypatch.setattr(candidate_scout.llm, "structured_call", fake_llm)
+    monkeypatch.setattr(proposal_checks, "check_symbols", lambda *a: [])
+    monkeypatch.setattr(proposal_checks.tiingo, "fill_symbol_meta",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(
+        proposal_checks, "symbol_identity_block",
+        lambda *a: "\n\nSYMBOL DIRECTORY CHECK:\n- AAA = Alpha Alloys (NYSE)")
+    monkeypatch.setattr(
+        review_gate, "review",
+        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+    )
+    with conn.transaction():
+        theme = candidate_scout.scout(conn)
+        assert theme is not None and theme.slug == "ri-refined"
+        assert len(calls) == 2  # draft + one identity-grounded refinement
+        assert "SYMBOL DIRECTORY CHECK" not in calls[0]
+        assert "Alpha Alloys" in calls[1]
+        raise psycopg.Rollback
+
+
 def test_generate_with_review_retries_then_fails_loudly(monkeypatch):
     attempts = []
     verdicts = iter([
