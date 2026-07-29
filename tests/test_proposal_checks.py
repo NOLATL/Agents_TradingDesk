@@ -41,7 +41,8 @@ def seed_directory(conn):
             "INSERT INTO symbol_directory (ticker, name, description, exchange,"
             " asset_type, refreshed_at) VALUES (%s, %s, %s, %s, %s, %s)"
             " ON CONFLICT (ticker) DO UPDATE SET exchange = EXCLUDED.exchange,"
-            " asset_type = EXCLUDED.asset_type, name = EXCLUDED.name",
+            " asset_type = EXCLUDED.asset_type, name = EXCLUDED.name,"
+            " description = EXCLUDED.description",
             (ticker, name, desc, exchange, asset_type, now),
         )
 
