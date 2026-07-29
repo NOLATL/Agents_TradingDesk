@@ -11,9 +11,11 @@ enforced downstream at the evidence boundary).
     uv run python -m data.adapters.rss
 """
 
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 from pathlib import Path
 
 import yaml
@@ -26,6 +28,8 @@ from schemas.models import Document
 DISCOVERY_PATH = Path(__file__).parent.parent.parent / "config" / "discovery.yaml"
 LICENSE_NOTE = "public RSS/Atom feed; titles/links used for internal research only"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+SUMMARY_CHARS = 400  # per-item cap; Substack feeds carry full article bodies
 
 
 def discovery_config() -> dict:
@@ -66,8 +70,23 @@ def ingest_all() -> dict[str, bool]:
     return results
 
 
-def parse_headlines(doc: Document) -> list[dict]:
-    """Deterministic parse of a cached feed document → [{title, published}]."""
+def _clean_summary(raw: str | None) -> str | None:
+    """HTML → plain text, whitespace-collapsed, word-boundary truncated.
+    Stdlib only (no feedparser, per module contract)."""
+    if not raw:
+        return None
+    text = " ".join(unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+    if not text:
+        return None
+    if len(text) > SUMMARY_CHARS:
+        text = text[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
+    return text
+
+
+def parse_items(doc: Document) -> list[dict]:
+    """Deterministic parse of a cached feed document →
+    [{title, summary, published}]. Summary comes from RSS <description> /
+    <content:encoded> or Atom <summary>/<content>; None when absent."""
     try:
         root = ET.fromstring(doc.raw_bytes.decode("utf-8", errors="replace"))
     except ET.ParseError:
@@ -85,7 +104,11 @@ def parse_headlines(doc: Document) -> list[dict]:
                 published = parsedate_to_datetime(pub)
             except (TypeError, ValueError):
                 published = None
-        out.append({"title": " ".join(title.split()), "published": published})
+        summary = _clean_summary(
+            item.findtext("description") or item.findtext(f"{CONTENT_NS}encoded")
+        )
+        out.append({"title": " ".join(title.split()),
+                    "summary": summary, "published": published})
     # Atom
     for entry in root.iter(f"{ATOM_NS}entry"):
         title = entry.findtext(f"{ATOM_NS}title")
@@ -98,15 +121,26 @@ def parse_headlines(doc: Document) -> list[dict]:
                 published = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             except ValueError:
                 published = None
-        out.append({"title": " ".join(title.split()), "published": published})
+        summary = _clean_summary(
+            entry.findtext(f"{ATOM_NS}summary") or entry.findtext(f"{ATOM_NS}content")
+        )
+        out.append({"title": " ".join(title.split()),
+                    "summary": summary, "published": published})
     return out
 
 
-def recent_headlines(conn, hours: int = 168, limit: int = 120) -> list[str]:
-    """Deduped titles from the newest cached copy of each feed, newest first.
+def parse_headlines(doc: Document) -> list[dict]:
+    """Deterministic parse of a cached feed document → [{title, published}]."""
+    return [
+        {"title": i["title"], "published": i["published"]}
+        for i in parse_items(doc)
+    ]
 
-    Undated items are kept (many feeds omit dates) but sorted last.
-    """
+
+def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
+    """Deduped {title, summary} items from the newest cached copy of each
+    feed, newest first. Undated items are kept (many feeds omit dates) but
+    sorted last."""
     docs = repo.fetch(
         conn, Document,
         "source_name = 'rss' ORDER BY ingestion_time DESC",
@@ -117,20 +151,25 @@ def recent_headlines(conn, hours: int = 168, limit: int = 120) -> list[str]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     rows = []
     for doc in newest_per_feed.values():
-        for h in parse_headlines(doc):
-            published = h["published"]
+        for item in parse_items(doc):
+            published = item["published"]
             if published is not None and published.tzinfo is None:
                 published = published.replace(tzinfo=timezone.utc)
             if published is not None and published < cutoff:
                 continue
-            rows.append((published or datetime.min.replace(tzinfo=timezone.utc), h["title"]))
+            rows.append((published or datetime.min.replace(tzinfo=timezone.utc), item))
     rows.sort(key=lambda r: r[0], reverse=True)
-    seen, titles = set(), []
-    for _, title in rows:
-        if title not in seen:
-            seen.add(title)
-            titles.append(title)
-    return titles[:limit]
+    seen, items = set(), []
+    for _, item in rows:
+        if item["title"] not in seen:
+            seen.add(item["title"])
+            items.append({"title": item["title"], "summary": item["summary"]})
+    return items[:limit]
+
+
+def recent_headlines(conn, hours: int = 168, limit: int = 120) -> list[str]:
+    """Deduped titles only (theme briefs); see recent_items for summaries."""
+    return [i["title"] for i in recent_items(conn, hours=hours, limit=limit)]
 
 
 if __name__ == "__main__":
