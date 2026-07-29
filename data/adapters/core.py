@@ -69,6 +69,7 @@ def fetch_and_cache(
     headers: dict[str, str] | None = None,
     stored_params: dict[str, Any] | None = None,
     timeout: float = 30.0,
+    follow_redirects: bool = False,
 ) -> tuple[Document, bool]:
     """GET url, cache the raw response immutably. Returns (document, was_fetched).
 
@@ -85,7 +86,8 @@ def fetch_and_cache(
     document's query_params — pass a scrubbed copy when the request params
     contain a secret (e.g. FRED api_key), which must never enter the DB.
     """
-    response = httpx.get(url, params=params, headers=headers, timeout=timeout)
+    response = httpx.get(url, params=params, headers=headers, timeout=timeout,
+                         follow_redirects=follow_redirects)
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:

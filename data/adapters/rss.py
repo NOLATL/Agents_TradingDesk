@@ -70,23 +70,39 @@ def ingest_all() -> dict[str, bool]:
     return results
 
 
-def _clean_summary(raw: str | None) -> str | None:
-    """HTML → plain text, whitespace-collapsed, word-boundary truncated.
-    Stdlib only (no feedparser, per module contract)."""
+def _clean_text(raw: str | None) -> str | None:
+    """HTML → plain text, whitespace-collapsed, uncapped. Stdlib only
+    (no feedparser, per module contract)."""
     if not raw:
         return None
     text = " ".join(unescape(re.sub(r"<[^>]+>", " ", raw)).split())
-    if not text:
-        return None
-    if len(text) > SUMMARY_CHARS:
-        text = text[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
+    return text or None
+
+
+def _cap_summary(text: str | None) -> str | None:
+    if text and len(text) > SUMMARY_CHARS:
+        return text[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
     return text
+
+
+def _clean_summary(raw: str | None) -> str | None:
+    return _cap_summary(_clean_text(raw))
+
+
+def _atom_link(entry) -> str | None:
+    links = list(entry.iter(f"{ATOM_NS}link"))
+    for link in links:
+        if link.get("rel") in (None, "alternate") and link.get("href"):
+            return link.get("href").strip()
+    return links[0].get("href", "").strip() or None if links else None
 
 
 def parse_items(doc: Document) -> list[dict]:
     """Deterministic parse of a cached feed document →
-    [{title, summary, published}]. Summary comes from RSS <description> /
-    <content:encoded> or Atom <summary>/<content>; None when absent."""
+    [{title, summary, published, link, body}]. Summary keeps its 400-char
+    cap (rendered-context budget); body is the UNCAPPED text, preferring
+    content:encoded (Substack/TWZ/USNI carry full articles there) — the
+    idea funnel's deep-evidence stage reads it. link is the article URL."""
     try:
         root = ET.fromstring(doc.raw_bytes.decode("utf-8", errors="replace"))
     except ET.ParseError:
@@ -104,11 +120,17 @@ def parse_items(doc: Document) -> list[dict]:
                 published = parsedate_to_datetime(pub)
             except (TypeError, ValueError):
                 published = None
+        # Summary sourcing unchanged (description first) so rendered scout
+        # context stays identical; body prefers the full-article field.
         summary = _clean_summary(
             item.findtext("description") or item.findtext(f"{CONTENT_NS}encoded")
         )
-        out.append({"title": " ".join(title.split()),
-                    "summary": summary, "published": published})
+        body = _clean_text(
+            item.findtext(f"{CONTENT_NS}encoded") or item.findtext("description")
+        )
+        link = (item.findtext("link") or "").strip() or None
+        out.append({"title": " ".join(title.split()), "summary": summary,
+                    "published": published, "link": link, "body": body})
     # Atom
     for entry in root.iter(f"{ATOM_NS}entry"):
         title = entry.findtext(f"{ATOM_NS}title")
@@ -124,8 +146,12 @@ def parse_items(doc: Document) -> list[dict]:
         summary = _clean_summary(
             entry.findtext(f"{ATOM_NS}summary") or entry.findtext(f"{ATOM_NS}content")
         )
-        out.append({"title": " ".join(title.split()),
-                    "summary": summary, "published": published})
+        body = _clean_text(
+            entry.findtext(f"{ATOM_NS}content") or entry.findtext(f"{ATOM_NS}summary")
+        )
+        out.append({"title": " ".join(title.split()), "summary": summary,
+                    "published": published, "link": _atom_link(entry),
+                    "body": body})
     return out
 
 
@@ -138,9 +164,9 @@ def parse_headlines(doc: Document) -> list[dict]:
 
 
 def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
-    """Deduped {title, summary} items from the newest cached copy of each
-    feed, newest first. Undated items are kept (many feeds omit dates) but
-    sorted last."""
+    """Deduped {title, summary, link, body} items from the newest cached
+    copy of each feed, newest first. Undated items are kept (many feeds
+    omit dates) but sorted last."""
     docs = repo.fetch(
         conn, Document,
         "source_name = 'rss' ORDER BY ingestion_time DESC",
@@ -163,7 +189,8 @@ def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
     for _, item in rows:
         if item["title"] not in seen:
             seen.add(item["title"])
-            items.append({"title": item["title"], "summary": item["summary"]})
+            items.append({"title": item["title"], "summary": item["summary"],
+                          "link": item.get("link"), "body": item.get("body")})
     return items[:limit]
 
 

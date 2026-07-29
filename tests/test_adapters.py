@@ -87,7 +87,7 @@ class FakeResponse:
 def test_fetch_and_cache_idempotent(conn, monkeypatch):
     calls = {"n": 0}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, follow_redirects=False):
         calls["n"] += 1
         return FakeResponse(b"same-bytes-every-time")
 
@@ -108,6 +108,23 @@ def test_fetch_and_cache_idempotent(conn, monkeypatch):
             (doc1.content_hash,),
         ).fetchone()[0]
         assert n_rows == 1
+        raise psycopg.Rollback
+
+
+def test_follow_redirects_forwarded(conn, monkeypatch):
+    seen = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None, follow_redirects=False):
+        seen["follow_redirects"] = follow_redirects
+        return FakeResponse(b"article-bytes")
+
+    monkeypatch.setattr(core.httpx, "get", fake_get)
+    with conn.transaction():
+        core.fetch_and_cache(
+            conn, url="https://x.test/article", params=None,
+            source_name="article", license_note="t", follow_redirects=True,
+        )
+        assert seen["follow_redirects"] is True
         raise psycopg.Rollback
 
 
@@ -173,7 +190,7 @@ def test_rss_summaries_extracted_and_html_stripped():
     from data.adapters.rss import parse_items
 
     payload = """<rss><channel>
-      <item><title>Plain item</title>
+      <item><title>Plain item</title><link>https://x.test/plain</link>
         <description>&lt;p&gt;A &lt;b&gt;bold&lt;/b&gt; summary.&lt;/p&gt;</description></item>
       <item><title>Substack item</title>
         <content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/">
@@ -184,6 +201,10 @@ def test_rss_summaries_extracted_and_html_stripped():
     items = parse_items(_feed_doc(payload))
     assert [i["title"] for i in items] == ["Plain item", "Substack item", "No summary item"]
     assert items[0]["summary"] == "A bold summary."          # tags stripped, entities unescaped
+    assert items[0]["link"] == "https://x.test/plain"
+    assert items[1]["link"] is None
+    # body is UNCAPPED (full content:encoded), summary keeps the 400 cap
+    assert len(items[1]["body"]) > 800 and "…" not in items[1]["body"]
     assert items[1]["summary"].endswith("…")                  # word-boundary truncation
     assert len(items[1]["summary"]) <= 401
     assert items[2]["summary"] is None
@@ -194,11 +215,15 @@ def test_atom_summary_extracted():
 
     payload = """<feed xmlns="http://www.w3.org/2005/Atom">
       <entry><title>Atom item</title><summary>Short note.</summary>
+        <link rel="self" href="https://x.test/feed.xml"/>
+        <link rel="alternate" href="https://x.test/atom-article"/>
         <updated>2026-07-29T01:00:00Z</updated></entry>
     </feed>"""
     items = parse_items(_feed_doc(payload))
     assert items == [{"title": "Atom item", "summary": "Short note.",
-                      "published": datetime(2026, 7, 29, 1, tzinfo=UTC)}]
+                      "published": datetime(2026, 7, 29, 1, tzinfo=UTC),
+                      "link": "https://x.test/atom-article",
+                      "body": "Short note."}]
 
 
 def test_malformed_feed_yields_zero_items():
@@ -340,7 +365,7 @@ def test_fetch_and_cache_redacts_key_on_http_error(monkeypatch):
     params = {"series_id": "IPUTIL", "api_key": KEY, "file_type": "json"}
     stored = {k: v for k, v in params.items() if k != "api_key"}
 
-    def fake_get(u, params=None, headers=None, timeout=None):
+    def fake_get(u, params=None, headers=None, timeout=None, follow_redirects=False):
         req = httpx.Request("GET", httpx.URL(u, params=params))  # URL carries the key
         return httpx.Response(400, request=req, text="Bad Request")
 
