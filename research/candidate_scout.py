@@ -78,6 +78,12 @@ GROUNDING RULES (violations get the proposal rejected):
   its <business line> segment"), which is acceptable and honest.
 - Do NOT re-propose a recently rejected theme family unless you cite materially NEW evidence
   and say explicitly what changed.
+- CONVICTION CALIBRATION: label medium or high ONLY when at least two cited evidence points
+  specifically name the industry, companies, or mechanism you claim. Generic term trends
+  (backlog, electrification) and single headlines support LOW conviction only — and when
+  evidence is generic, say so plainly ("evidence is thin: the EDGAR terms are economy-wide,
+  the linkage is inferential") instead of narrating confidence. The reviewer approves an
+  honest low-conviction proposal; it rejects a confident narrative on generic evidence.
 
 The description is the human's decision document: they will accept or reject the theme from it
 alone, so it must stand on its own. Write 3-4 full paragraphs covering, in order:
