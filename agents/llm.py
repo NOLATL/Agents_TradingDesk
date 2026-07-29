@@ -30,6 +30,10 @@ from schemas.models import AgentRun
 S = TypeVar("S", bound=BaseModel)
 
 LLM_CFG = SLICE["llm"]
+# Native Ollama API root (2026-07-29): the OpenAI-compat /v1 endpoint
+# silently ignores options.num_ctx (DECISIONS.md), so calls go to /api/chat
+# where num_ctx is honored and `format` gives schema-constrained decoding.
+NATIVE_ROOT = LLM_CFG["base_url"].removesuffix("/v1")
 
 
 class ModelOutputRejected(Exception):
@@ -133,18 +137,21 @@ def structured_call(
     last_error: Exception | None = None
     for _ in range(LLM_CFG["max_retries"]):
         response = httpx.post(
-            f"{LLM_CFG['base_url']}/chat/completions",
+            f"{NATIVE_ROOT}/api/chat",
             json={
                 "model": tag,
                 "messages": messages,
-                "temperature": temperature,
-                "response_format": {"type": "json_object"},
-                "options": {"num_ctx": LLM_CFG["num_ctx"]},
+                "stream": False,
+                "format": schema.model_json_schema(),
+                "options": {
+                    "temperature": temperature,
+                    "num_ctx": LLM_CFG["num_ctx"],
+                },
             },
             timeout=600.0,
         )
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        content = response.json()["message"]["content"]
         try:
             result = schema.model_validate_json(_extract_json(content))
             _finish(conn, run, output=content, success=True)
