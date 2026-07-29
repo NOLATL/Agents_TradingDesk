@@ -328,12 +328,12 @@ def scout(conn, session: date | None = None) -> Theme | None:
         generate, kind="candidate theme proposal (unified daily scout)",
         context=review_context, precheck=precheck,
         system=SCOUT_REVIEW_SYSTEM, context_cap=40000,
+        on_review=lambda ok, crit: proposal_checks.record_attempt(
+            conn, session, "REVIEW", ok, crit, len(ctx.text), model_tag),
     )
     proposal = proposals[-1] if proposals else None
     if proposal is None:
         raise ScoutError("scout produced no proposal artifact")
-    proposal_checks.record_attempt(
-        conn, session, "REVIEW", approved, critique, len(ctx.text), model_tag)
     if not approved:
         # Surfaced by the caller (intake phase notifies); never enters the queue.
         raise ReviewRejected(proposal, critique)

@@ -12,6 +12,7 @@ spend is logged to data/llm_usage.jsonl (ported from Agents_Economics).
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -120,10 +121,32 @@ def _parse_call(client, kind, artifact, context, artifact_cap, context_cap,
     )
 
 
+TRANSIENT_REVIEW_RETRIES = 2   # extra tries on 529/5xx/connection errors
+TRANSIENT_RETRY_WAIT_S = 30.0  # the SDK's own backoff already ran before this
+
+
+def _review_with_transient_retry(kind, artifact, context, *, system, context_cap):
+    """One review verdict, retrying transient infrastructure failures
+    (overloaded/5xx/connection) with a flat wait — the 2026-07-29 test drive
+    lost a night to a single 529 recorded as a rejection. 4xx errors
+    (auth/config) are NOT retried; they raise immediately."""
+    for attempt in range(1 + TRANSIENT_REVIEW_RETRIES):
+        try:
+            return review(kind, artifact, context,
+                          system=system, context_cap=context_cap)
+        except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
+            status = getattr(e, "status_code", None)
+            transient = status is None or status >= 500 or status == 429
+            if not transient or attempt == TRANSIENT_REVIEW_RETRIES:
+                raise
+            time.sleep(TRANSIENT_RETRY_WAIT_S)
+
+
 def generate_with_review(generate, kind: str, context: str, *,
                          precheck=None, max_precheck_retries: int = 2,
                          system: str | None = None,
-                         context_cap: int = 12000):
+                         context_cap: int = 12000,
+                         on_review=None):
     """generate(critique: str | None) -> artifact string. Returns
     (artifact, approved: bool, critique). approved=False means every attempt
     was rejected (or the gate is offline) — the CALLER must surface that
@@ -139,7 +162,15 @@ def generate_with_review(generate, kind: str, context: str, *,
     context may be a callable returning the context string — evaluated at
     review time, so callers can append artifact-dependent grounding (e.g.
     the symbol-directory identities for the tickers actually proposed).
+
+    on_review(approved: bool, critique: str) fires after EVERY review
+    verdict (or gate failure), so callers can record per-attempt outcomes —
+    the final return value alone loses intermediate critiques.
     """
+    def _note(approved: bool, critique: str):
+        if on_review is not None:
+            on_review(approved, critique)
+
     critique: str | None = None
     artifact = ""
     for _ in range(1 + GATE_RETRIES):
@@ -151,15 +182,19 @@ def generate_with_review(generate, kind: str, context: str, *,
                     break
                 artifact = generate(issues)
         try:
-            verdict = review(kind, artifact,
-                             context() if callable(context) else context,
-                             system=system, context_cap=context_cap)
+            verdict = _review_with_transient_retry(
+                kind, artifact, context() if callable(context) else context,
+                system=system, context_cap=context_cap)
         except ReviewUnavailable as e:
+            _note(False, str(e))
             return artifact, False, str(e)
         except ReviewParseError as e:
+            _note(False, f"review verdict unparseable: {e}")
             return artifact, False, f"review verdict unparseable: {e}"
         except anthropic.APIError as e:
+            _note(False, f"review gate error: {e}")
             return artifact, False, f"review gate error: {e}"
+        _note(verdict.approve, verdict.critique)
         if verdict.approve:
             return artifact, True, verdict.critique
         critique = verdict.critique
