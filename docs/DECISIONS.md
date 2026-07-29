@@ -451,6 +451,48 @@ memory. Shipped (plan reviewed with Jared in-session):
   swap ship together at the human's call — the `scout_attempts` PRECHECK
   rows still separate deterministic catches from review-quality effects.
 
+**Two-stage scout idea funnel + native Ollama API (2026-07-29 evening, Jared's
+design).** Same-day follow-on to the anti-hallucination overhaul after the
+first live approval (`maritime-logistics-volatility`). The remaining ceiling
+was evidence depth — proposals were written from 400-char RSS summaries and
+EDGAR hit-counts. Shipped:
+- **Idea funnel** (`research/idea_funnel.py`, migration 008): Stage 1 — one
+  local generation sketches THREE distinct ideas from the summary-level
+  context (breadth pressure; three different domains required). Stage 2 — a
+  GENEROUS local gate (default KEEP; kills only clear duplicates,
+  evidence-free, or price-based ideas; deterministic citation validation
+  overrides the judge both ways) ranks survivors by evidence specificity +
+  domain freshness. Stage 3 — deterministic deep dive for the winner only:
+  full article text (cached feed `content:encoded` bodies first — TWZ/USNI/
+  Substacks carry complete articles; link fetch with browser UA + redirects
+  as fallback; summary as the floor) excerpted via `chunking.relevant_excerpt`
+  (4K chars/article, ≤5 articles, 18K total), plus "companies driving this
+  trend" parsed from the ALREADY-CACHED EDGAR full-text responses
+  (`display_names` carry company+ticker+CIK — zero new API calls). Stage 4 —
+  the existing precheck/refinement/review pipeline unchanged, on the
+  enriched context (reviewer context_cap 40K→60K chars). **The funnel is
+  pure enrichment: any failure degrades to the single-pass pipeline — the
+  mandatory nightly proposal never depends on it.** Adds exactly two local
+  generations (~5 min); IDEA/IDEA_GATE rows in `scout_attempts` instrument
+  it.
+- **Native Ollama API (infra ruling):** `agents/llm.py` moved from the
+  OpenAI-compat `/v1/chat/completions` shim to native `/api/chat`. The shim
+  silently ignored `options.num_ctx` (server ran 32768 regardless of the
+  configured 40960 — confirmed via `ollama ps`); the native endpoint honors
+  it (verified: CONTEXT 40960 after the switch) and adds schema-constrained
+  decoding via `format`. Layer-1 transport change only — same models, same
+  prompts, same prompt_version hashes — NOT an experiment condition (same
+  class as the 2026-07-25 Report Assembler ruling).
+- **Feed pool widened (human choice):** gcaptain (shipping), mining.com
+  (materials), fiercepharma (healthcare), modernfarmer (agriculture — agweb
+  403s behind a bot wall). All verified 200 + RSS 2.0 at add time; dead
+  feeds parse to zero items.
+- **RSS items now carry `link` + uncapped `body`** (summary keeps its
+  400-char cap so the rendered scout context is unchanged);
+  `fetch_and_cache` gained `follow_redirects`.
+- Watch item for the first 3 nightlies: IDEA_GATE kill-rate — if the
+  "generous" gate kills >1 idea/night as duplicates, loosen its prompt.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
