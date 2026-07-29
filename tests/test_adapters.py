@@ -158,6 +158,97 @@ def test_tiingo_parse_skips_malformed_rows():
 
 
 # --------------------------------------------------------------------------- #
+# RSS item parsing (summaries for the scout context, 2026-07-29)
+# --------------------------------------------------------------------------- #
+
+def _feed_doc(payload: str) -> Document:
+    now = datetime(2026, 7, 29, tzinfo=UTC)
+    return Document(
+        content_hash="x", raw_bytes=payload.encode(), retrieval_url="u",
+        source_name="rss", ingestion_time=now, first_eligible_decision_time=now,
+    )
+
+
+def test_rss_summaries_extracted_and_html_stripped():
+    from data.adapters.rss import parse_items
+
+    payload = """<rss><channel>
+      <item><title>Plain item</title>
+        <description>&lt;p&gt;A &lt;b&gt;bold&lt;/b&gt; summary.&lt;/p&gt;</description></item>
+      <item><title>Substack item</title>
+        <content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/">
+          &lt;div&gt;""" + ("Long body word " * 60) + """&lt;/div&gt;
+        </content:encoded></item>
+      <item><title>No summary item</title></item>
+    </channel></rss>"""
+    items = parse_items(_feed_doc(payload))
+    assert [i["title"] for i in items] == ["Plain item", "Substack item", "No summary item"]
+    assert items[0]["summary"] == "A bold summary."          # tags stripped, entities unescaped
+    assert items[1]["summary"].endswith("…")                  # word-boundary truncation
+    assert len(items[1]["summary"]) <= 401
+    assert items[2]["summary"] is None
+
+
+def test_atom_summary_extracted():
+    from data.adapters.rss import parse_items
+
+    payload = """<feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><title>Atom item</title><summary>Short note.</summary>
+        <updated>2026-07-29T01:00:00Z</updated></entry>
+    </feed>"""
+    items = parse_items(_feed_doc(payload))
+    assert items == [{"title": "Atom item", "summary": "Short note.",
+                      "published": datetime(2026, 7, 29, 1, tzinfo=UTC)}]
+
+
+def test_malformed_feed_yields_zero_items():
+    from data.adapters.rss import parse_items
+
+    assert parse_items(_feed_doc("<rss><chan")) == []
+
+
+def test_symbol_directory_refresh_parses_dedupes_and_upserts(conn, monkeypatch):
+    """Zip → CSV → symbol_directory, duplicate tickers deduped. refresh
+    commits (adapter-style), so this runs only against an empty directory
+    (pre-first-real-refresh) and cleans up after itself."""
+    import io
+    import zipfile
+
+    from data.adapters import tiingo as tg
+
+    if conn.execute("SELECT 1 FROM symbol_directory LIMIT 1").fetchone():
+        pytest.skip("symbol_directory already populated by a real refresh")
+
+    csv_text = (
+        "ticker,exchange,assetType,priceCurrency,startDate,endDate\n"
+        "mp,NYSE,Stock,USD,2020-07-15,2026-07-28\n"
+        "MP,NYSE,Stock,USD,2020-07-15,2026-07-28\n"   # dupe: kept once
+        "lyscf,OTC MKTS,Stock,USD,,\n"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("supported_tickers.csv", csv_text)
+    stub = Document(
+        content_hash="zip", raw_bytes=buf.getvalue(), retrieval_url="u",
+        source_name="tiingo_directory",
+        ingestion_time=datetime(2026, 7, 29, tzinfo=UTC),
+        first_eligible_decision_time=datetime(2026, 7, 29, tzinfo=UTC),
+    )
+    monkeypatch.setattr(tg, "fetch_and_cache", lambda *a, **k: (stub, True))
+    try:
+        assert tg.refresh_symbol_directory(conn) == 2
+        assert tg.refresh_symbol_directory(conn) == 0  # fresh → no-op
+        rows = tg.lookup_symbols(conn, ["MP", "LYSCF", "ZZZZ"])
+        assert rows["MP"]["exchange"] == "NYSE"
+        assert rows["MP"]["asset_type"] == "Stock"
+        assert rows["LYSCF"]["exchange"] == "OTC MKTS"
+        assert rows["ZZZZ"] is None
+    finally:
+        conn.execute("DELETE FROM symbol_directory")
+        conn.commit()
+
+
+# --------------------------------------------------------------------------- #
 # Reconciliation classification
 # --------------------------------------------------------------------------- #
 

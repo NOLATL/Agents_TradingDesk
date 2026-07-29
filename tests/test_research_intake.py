@@ -30,13 +30,20 @@ def proposal(slug="ri-test-theme"):
     return candidate_scout.CandidateProposal(
         slug=slug, title="Test theme",
         description="a forming pattern", symbols=["AAA", "BBB"],
-        evidence_points=["EDGAR mentions doubled", "three independent headlines"],
+        evidence_points=["[E1] EDGAR mentions doubled",
+                         "[H1] three independent headlines"],
+        conviction="medium",
     )
 
 
 @pytest.fixture
 def mock_context(monkeypatch):
-    monkeypatch.setattr(candidate_scout, "_context", lambda *a: "CONTEXT")
+    monkeypatch.setattr(
+        candidate_scout, "build_context",
+        lambda *a: candidate_scout.ScoutContext(
+            text="CONTEXT", issued_ids={"H1", "E1"},
+            edgar_directions={"E1": "ROSE"}),
+    )
 
 
 def _mock_scout_llm(monkeypatch, prop):

@@ -89,6 +89,17 @@ def test_report_renders_proposed_and_error(conn):
         raise psycopg.Rollback
 
 
+def test_report_renders_conviction_on_proposed(conn):
+    with conn.transaction():
+        clear_real_outcomes(conn)
+        daily_monitor.record_scout_outcome(
+            conn, SESSION, "PROPOSED", "so-thin-but-honest", "Quiet-day signal",
+            conviction="low")
+        text = "\n".join(_scout_outcome_lines(conn, SESSION))
+        assert "Scout conviction: **LOW**" in text
+        raise psycopg.Rollback
+
+
 def test_stale_outcome_is_dated(conn):
     with conn.transaction():
         clear_real_outcomes(conn)
@@ -103,20 +114,23 @@ def test_intake_records_rejection_outcome(conn, monkeypatch):
     """The regression: a review-rejected night must leave an outcome row
     (and a notification), not vanish. intake() commits, so clean up after."""
     from data.adapters import rss as rss_adapter
+    from data.adapters import tiingo as tiingo_adapter
     from ops import approve
     from research import theme_brief
 
     proposal = candidate_scout.CandidateProposal(
         slug="so-intake-rejected", title="Rejected idea",
         description="pattern", symbols=["AAA"],
-        evidence_points=["one", "two"],
+        evidence_points=["one", "two"], conviction="low",
     )
 
-    def rejecting_scout(_conn):
+    def rejecting_scout(_conn, _session=None):
         raise candidate_scout.ReviewRejected(proposal, "single-source evidence")
 
     sent = []
     monkeypatch.setattr(rss_adapter, "ingest_all", lambda: None)
+    monkeypatch.setattr(tiingo_adapter, "refresh_symbol_directory",
+                        lambda *a, **k: 0)
     monkeypatch.setattr(approve, "roll_theme_queue", lambda *a, **k: None)
     monkeypatch.setattr(candidate_scout, "scout", rejecting_scout)
     monkeypatch.setattr(theme_brief, "write_brief", lambda *a, **k: None)
