@@ -52,10 +52,10 @@ stage1_slice:
   llm:
     base_url: http://localhost:11434/v1
     model_tag: qwen3:30b-a3b
-    # scout_model_tag: qwen3.6:35b   # research-layer override for the nightly
-    #   scout ONLY (human ruling 2026-07-29, DECISIONS.md) — engine roles keep
-    #   model_tag. Uncomment after `ollama pull` + digest recorded, ~1 week
-    #   after the grounding fixes ship so improvement stays attributable.
+    scout_model_tag: qwen3.6:35b    # research-layer override for the nightly
+    #   scout ONLY (human ruling 2026-07-29, DECISIONS.md — swapped same day
+    #   at Jared's direction) — engine roles keep model_tag. Digest at swap:
+    #   07d35212591f (also in DECISIONS.md).
     num_ctx: 40960
     max_retries: 3
   vault_dir: /home/jared/obsidian-brain/TradingDesk

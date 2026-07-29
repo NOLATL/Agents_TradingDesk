@@ -441,12 +441,15 @@ memory. Shipped (plan reviewed with Jared in-session):
   never feeds a forecast, basket, or order). Model switches for the scout
   are allowed but must be tracked here with tag+digest+date.
   `stage1_slice.llm.scout_model_tag` overrides the scout's model only; the
-  four engine roles keep the frozen `qwen3:30b-a3b`. PLANNED (ship ~1 week
-  after these grounding fixes so improvement stays attributable): swap the
-  scout to `qwen3.6:35b` (Qwen3.6-35B-A3B, Apr 2026 — same 3B-active MoE
-  class on this hardware, materially better instruction-following and
-  long-tail knowledge than the Apr-2025 tag). Record the pulled digest here
-  at swap time.
+  four engine roles keep the frozen `qwen3:30b-a3b`. **SWAPPED same day
+  (2026-07-29, human direction — "no reason to wait"):** scout now runs
+  `qwen3.6:35b` (Qwen3.6-35B-A3B, Apr 2026 — same 3B-active MoE class on
+  this hardware, materially better instruction-following and long-tail
+  knowledge than the Apr-2025 tag), **digest `07d35212591f`**, 23 GB.
+  Smoke-verified on-box: valid structured JSON at num_ctx 40960 with correct
+  evidence-ID citations. Attribution note: grounding fixes and the model
+  swap ship together at the human's call — the `scout_attempts` PRECHECK
+  rows still separate deterministic catches from review-quality effects.
 
 ## Deferred ideas (noted, not built)
 
