@@ -120,18 +120,40 @@ def _parse_call(client, kind, artifact, context, artifact_cap, context_cap,
     )
 
 
-def generate_with_review(generate, kind: str, context: str):
+def generate_with_review(generate, kind: str, context: str, *,
+                         precheck=None, max_precheck_retries: int = 2,
+                         system: str | None = None,
+                         context_cap: int = 12000):
     """generate(critique: str | None) -> artifact string. Returns
     (artifact, approved: bool, critique). approved=False means every attempt
     was rejected (or the gate is offline) — the CALLER must surface that
     loudly and must not publish the draft as reviewed work.
+
+    precheck(artifact) -> str | None runs deterministic validation (e.g.
+    ticker existence, citation IDs) before each Sonnet call. Issues feed
+    back to the local generator WITHOUT consuming a Sonnet attempt — local
+    regenerations are free; the audit budget is for semantic review. After
+    max_precheck_retries the draft goes to Sonnet anyway (never silently
+    dropped): the reviewer sees whatever precheck could not fix.
+
+    context may be a callable returning the context string — evaluated at
+    review time, so callers can append artifact-dependent grounding (e.g.
+    the symbol-directory identities for the tickers actually proposed).
     """
     critique: str | None = None
     artifact = ""
     for _ in range(1 + GATE_RETRIES):
         artifact = generate(critique)
+        if precheck is not None:
+            for _ in range(max_precheck_retries):
+                issues = precheck(artifact)
+                if issues is None:
+                    break
+                artifact = generate(issues)
         try:
-            verdict = review(kind, artifact, context)
+            verdict = review(kind, artifact,
+                             context() if callable(context) else context,
+                             system=system, context_cap=context_cap)
         except ReviewUnavailable as e:
             return artifact, False, str(e)
         except ReviewParseError as e:
