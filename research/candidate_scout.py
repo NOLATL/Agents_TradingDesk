@@ -38,7 +38,7 @@ from data.adapters import rss
 from data.adapters.core import fetch_and_cache
 from ops.approve import propose_theme, today_et
 from pydantic import BaseModel, ConfigDict, Field
-from research import proposal_checks
+from research import idea_funnel, proposal_checks
 from research.review_gate import generate_with_review
 from schemas.enums import AgentRole, ThemeSource
 from schemas.models import Experiment, Theme
@@ -148,9 +148,24 @@ class ScoutError(Exception):
     The intake phase surfaces this loudly — the day's proposal is missing."""
 
 
+def _parse_filers(payload: dict) -> list[dict]:
+    """Per-filing records from a cached EDGAR full-text-search response:
+    display_names carry 'Company (TICKER) (CIK …)' strings — deterministic
+    'companies driving this trend' evidence for the idea funnel."""
+    out = []
+    for hit in payload.get("hits", {}).get("hits", []):
+        src = hit.get("_source", {})
+        for name in src.get("display_names", []) or []:
+            out.append({"display": " ".join(name.split()),
+                        "form": src.get("file_type"),
+                        "file_date": src.get("file_date")})
+    return out
+
+
 def edgar_term_trend(conn, terms: list[str]) -> list[dict]:
     """Mention counts, last 30 days vs prior 30 — raw responses cached as
-    immutable documents (invariant 4). A failed query yields nulls."""
+    immutable documents (invariant 4). A failed query yields nulls. The
+    last-30d window's per-filing records ride along as 'filers'."""
     today = date.today()
     windows = [
         (today - timedelta(days=30), today),
@@ -159,7 +174,8 @@ def edgar_term_trend(conn, terms: list[str]) -> list[dict]:
     out = []
     for term in terms:
         counts = []
-        for start, end in windows:
+        filers: list[dict] = []
+        for i, (start, end) in enumerate(windows):
             try:
                 doc, _ = fetch_and_cache(
                     conn,
@@ -172,13 +188,14 @@ def edgar_term_trend(conn, terms: list[str]) -> list[dict]:
                     headers={"User-Agent": EDGAR_UA},
                     timeout=15.0,
                 )
-                counts.append(
-                    json.loads(doc.raw_bytes)["hits"]["total"]["value"]
-                )
+                payload = json.loads(doc.raw_bytes)
+                counts.append(payload["hits"]["total"]["value"])
+                if i == 0:
+                    filers = _parse_filers(payload)
             except Exception:
                 counts.append(None)
         out.append({"term": term, "filings_last_30d": counts[0],
-                    "filings_prior_30d": counts[1]})
+                    "filings_prior_30d": counts[1], "filers": filers})
     conn.commit()
     return out
 
@@ -203,10 +220,15 @@ def _candidate_exists_today(conn) -> bool:
 @dataclass
 class ScoutContext:
     """The scout's evidence context plus the machine-checkable facts about
-    it: which evidence IDs were issued and which EDGAR terms declined."""
+    it: which evidence IDs were issued, which EDGAR terms declined, and the
+    per-ID raw material the idea funnel's deep-evidence stage draws on."""
     text: str
     issued_ids: set[str] = field(default_factory=set)
     edgar_directions: dict[str, str] = field(default_factory=dict)
+    headline_items: dict[str, dict] = field(default_factory=dict)
+    edgar_terms: dict[str, str] = field(default_factory=dict)
+    edgar_filers: dict[str, list] = field(default_factory=dict)
+    evidence_lines: dict[str, str] = field(default_factory=dict)
 
 
 def _edgar_direction(last, prior) -> str:
@@ -246,15 +268,21 @@ def build_context(conn) -> ScoutContext:
     trends = edgar_term_trend(conn, terms)
 
     issued: set[str] = set()
+    headline_items: dict[str, dict] = {}
+    evidence_lines: dict[str, str] = {}
     headline_lines = []
     for i, item in enumerate(items, 1):
         hid = f"H{i}"
         issued.add(hid)
+        headline_items[hid] = item
         line = f"- [{hid}] {item['title']}"
         if item["summary"]:
             line += f" — {item['summary']}"
         headline_lines.append(line)
+        evidence_lines[hid] = line
     directions: dict[str, str] = {}
+    edgar_terms: dict[str, str] = {}
+    edgar_filers: dict[str, list] = {}
     trend_lines = []
     for i, t in enumerate(trends, 1):
         eid = f"E{i}"
@@ -262,6 +290,8 @@ def build_context(conn) -> ScoutContext:
         if direction != "NO DATA":
             issued.add(eid)
             directions[eid] = direction
+            edgar_terms[eid] = t["term"]
+            edgar_filers[eid] = t.get("filers", [])
         detail = {
             "ROSE": f"ROSE {t['filings_prior_30d']} -> {t['filings_last_30d']}",
             "DECLINED": f"DECLINED {t['filings_prior_30d']} -> {t['filings_last_30d']}"
@@ -269,7 +299,9 @@ def build_context(conn) -> ScoutContext:
             "FLAT": f"FLAT at {t['filings_last_30d']}",
             "NO DATA": "NO DATA (query failed — do not cite this term)",
         }[direction]
-        trend_lines.append(f"- [{eid}] \"{t['term']}\": {detail}")
+        line = f"- [{eid}] \"{t['term']}\": {detail}"
+        trend_lines.append(line)
+        evidence_lines[eid] = line
 
     rejected = _recently_rejected_lines(conn)
     text = (
@@ -287,7 +319,9 @@ def build_context(conn) -> ScoutContext:
             " families unless you cite materially NEW evidence and say what"
             " changed):\n" + "\n".join(rejected)
         )
-    return ScoutContext(text=text, issued_ids=issued, edgar_directions=directions)
+    return ScoutContext(text=text, issued_ids=issued, edgar_directions=directions,
+                        headline_items=headline_items, edgar_terms=edgar_terms,
+                        edgar_filers=edgar_filers, evidence_lines=evidence_lines)
 
 
 def _clean_slug(slug: str) -> str:
@@ -305,11 +339,31 @@ def scout(conn, session: date | None = None) -> Theme | None:
     ctx = build_context(conn)
     model_tag = SLICE["llm"].get("scout_model_tag", SLICE["llm"]["model_tag"])
 
+    # Idea funnel (2026-07-29, Jared's design): 3 ideas → generous local
+    # gate → deep evidence for the winner. Pure enrichment — any failure
+    # falls back to the single-pass pipeline; the mandatory proposal never
+    # depends on it.
+    funnel = None
+    try:
+        funnel = idea_funnel.run_idea_funnel(
+            conn, experiment_id=exp.id, ctx=ctx, model_tag=model_tag,
+            session=session)
+    except Exception as e:  # noqa: BLE001 — enrichment, never load-bearing
+        proposal_checks.record_attempt(
+            conn, session, "IDEA_GATE", False,
+            f"funnel crashed, falling back to single-pass:"
+            f" {type(e).__name__}: {str(e)[:600]}",
+            len(ctx.text), model_tag)
+    gen_context = ctx.text
+    if funnel is not None:
+        gen_context = (ctx.text + "\n\n" + funnel.idea_block
+                       + "\n\n" + funnel.evidence_block)
+
     proposals: list[CandidateProposal] = []
     refined = False
 
     def generate(critique: str | None) -> str:
-        prompt = ctx.text
+        prompt = gen_context
         if critique:
             # Revisions also see the authoritative identities of the tickers
             # they are revising — memory is not a valid source for exposure.
@@ -332,7 +386,7 @@ def scout(conn, session: date | None = None) -> Theme | None:
         nonlocal refined
         issues = proposal_checks.precheck_proposal(
             conn, proposals[-1], ctx.issued_ids, ctx.edgar_directions,
-            session, len(ctx.text), model_tag,
+            session, len(gen_context), model_tag,
         )
         if issues is not None:
             return issues
@@ -361,20 +415,21 @@ def scout(conn, session: date | None = None) -> Theme | None:
         return None
 
     def review_context() -> str:
-        # Evaluated at review time: base evidence plus the authoritative
-        # identities of the tickers actually proposed (fabrication defense).
+        # Evaluated at review time: enriched evidence (incl. any funnel
+        # deep-evidence block) plus the authoritative identities of the
+        # tickers actually proposed (fabrication defense).
         extra = ""
         if proposals:
             extra = proposal_checks.symbol_identity_block(
                 conn, proposals[-1].symbols)
-        return ctx.text + extra
+        return gen_context + extra
 
     artifact, approved, critique = generate_with_review(
         generate, kind="candidate theme proposal (unified daily scout)",
         context=review_context, precheck=precheck, max_precheck_retries=3,
-        system=SCOUT_REVIEW_SYSTEM, context_cap=40000,
+        system=SCOUT_REVIEW_SYSTEM, context_cap=60000,
         on_review=lambda ok, crit: proposal_checks.record_attempt(
-            conn, session, "REVIEW", ok, crit, len(ctx.text), model_tag),
+            conn, session, "REVIEW", ok, crit, len(gen_context), model_tag),
     )
     proposal = proposals[-1] if proposals else None
     if proposal is None:

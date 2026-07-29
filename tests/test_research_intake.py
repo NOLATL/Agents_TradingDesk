@@ -26,6 +26,18 @@ def conn():
     connection.close()
 
 
+
+def clear_todays_scout_theme(conn):
+    """A real scout run may have committed today's proposal into the dev DB
+    (first live approval: 2026-07-29); clear it inside the test's rollback
+    transaction so the idempotency gate doesn't short-circuit scout()."""
+    from ops.approve import today_et
+
+    conn.execute(
+        "DELETE FROM themes WHERE source <> 'HUMAN' AND proposed_on = %s"
+        " AND NOT backfilled", (today_et(),))
+
+
 def proposal(slug="ri-test-theme"):
     return candidate_scout.CandidateProposal(
         slug=slug, title="Test theme",
@@ -44,6 +56,9 @@ def mock_context(monkeypatch):
             text="CONTEXT", issued_ids={"H1", "E1"},
             edgar_directions={"E1": "ROSE"}),
     )
+    # Funnel is exercised in its own tests; here it stays out of the way.
+    monkeypatch.setattr(candidate_scout.idea_funnel, "run_idea_funnel",
+                        lambda *a, **k: None)
 
 
 def _mock_scout_llm(monkeypatch, prop):
@@ -58,6 +73,7 @@ def test_approved_proposal_enters_queue_once_per_day(conn, monkeypatch, mock_con
         lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="solid"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         theme = candidate_scout.scout(conn)
         assert theme is not None and theme.slug == "ri-test-theme"
         assert conn.execute(
@@ -77,6 +93,7 @@ def test_human_proposal_does_not_block_the_scout(conn, monkeypatch, mock_context
         lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="solid"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         propose_theme(conn, "ri-human-today", "Human idea", ["CCC"],
                       source=ThemeSource.HUMAN, commit=False)
         theme = candidate_scout.scout(conn)
@@ -92,6 +109,7 @@ def test_rejected_proposal_never_enters_queue_and_surfaces(conn, monkeypatch, mo
             approve=False, critique="single-source evidence"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         with pytest.raises(candidate_scout.ReviewRejected, match="ri-rejected"):
             candidate_scout.scout(conn)
         assert conn.execute(
@@ -109,6 +127,7 @@ def test_duplicate_slug_fails_loudly(conn, monkeypatch, mock_context):
         lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         propose_theme(conn, "ri-duplicate", "Existing theme", ["DDD"],
                       source=ThemeSource.HUMAN, commit=False)
         with pytest.raises(candidate_scout.ScoutError, match="ri-duplicate"):
@@ -123,6 +142,7 @@ def test_unusable_slug_fails_loudly(conn, monkeypatch, mock_context):
         lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         with pytest.raises(candidate_scout.ScoutError, match="unusable"):
             candidate_scout.scout(conn)
         raise psycopg.Rollback
@@ -152,11 +172,72 @@ def test_clean_proposal_gets_one_identity_refinement_pass(conn, monkeypatch, moc
         lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
     )
     with conn.transaction():
+        clear_todays_scout_theme(conn)
         theme = candidate_scout.scout(conn)
         assert theme is not None and theme.slug == "ri-refined"
         assert len(calls) == 2  # draft + one identity-grounded refinement
         assert "SYMBOL DIRECTORY CHECK" not in calls[0]
         assert "Alpha Alloys" in calls[1]
+        raise psycopg.Rollback
+
+
+def test_funnel_crash_falls_back_to_single_pass(conn, monkeypatch, mock_context):
+    """The mandatory-proposal invariant: a funnel failure degrades to the
+    current pipeline and leaves a failed IDEA_GATE instrument row."""
+    def exploding_funnel(*a, **k):
+        raise RuntimeError("ollama choked")
+
+    monkeypatch.setattr(candidate_scout.idea_funnel, "run_idea_funnel",
+                        exploding_funnel)
+    _mock_scout_llm(monkeypatch, proposal(slug="ri-fallback"))
+    monkeypatch.setattr(
+        review_gate, "review",
+        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+    )
+    with conn.transaction():
+        clear_todays_scout_theme(conn)
+        conn.execute("DELETE FROM scout_attempts WHERE stage = 'IDEA_GATE'"
+                     " AND issues LIKE 'funnel crashed%'")
+        theme = candidate_scout.scout(conn)
+        assert theme is not None and theme.slug == "ri-fallback"
+        row = conn.execute(
+            "SELECT passed, issues FROM scout_attempts WHERE stage = 'IDEA_GATE'"
+            " AND issues LIKE 'funnel crashed%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row is not None and row[0] is False and "ollama choked" in row[1]
+        raise psycopg.Rollback
+
+
+def test_funnel_win_enriches_generation_context(conn, monkeypatch, mock_context):
+    from research import idea_funnel as funnel_mod
+
+    winner = funnel_mod.CandidateIdea(
+        working_title="Barge squeeze", hypothesis="Rates rise.",
+        evidence_ids=["H1"], domain="shipping", non_overlap="Not grid.")
+    monkeypatch.setattr(
+        candidate_scout.idea_funnel, "run_idea_funnel",
+        lambda *a, **k: funnel_mod.FunnelResult(
+            idea=winner,
+            idea_block="WINNING IDEA (test): Barge squeeze",
+            evidence_block="DEEP EVIDENCE (test): full article text here"),
+    )
+    prompts = []
+
+    def fake_llm(_conn, **kw):
+        prompts.append(kw["user_prompt"])
+        return proposal(slug="ri-funnel-win")
+
+    monkeypatch.setattr(candidate_scout.llm, "structured_call", fake_llm)
+    monkeypatch.setattr(
+        review_gate, "review",
+        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+    )
+    with conn.transaction():
+        clear_todays_scout_theme(conn)
+        theme = candidate_scout.scout(conn)
+        assert theme is not None and theme.slug == "ri-funnel-win"
+        assert "WINNING IDEA" in prompts[0]
+        assert "DEEP EVIDENCE" in prompts[0]
         raise psycopg.Rollback
 
 

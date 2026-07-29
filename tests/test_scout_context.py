@@ -30,8 +30,9 @@ def mocked_sources(monkeypatch):
     monkeypatch.setattr(
         candidate_scout.rss, "recent_items",
         lambda *a, **k: [
-            {"title": "Army orders rare earth magnets", "summary": "A summary."},
-            {"title": "Grid queue lengthens", "summary": None},
+            {"title": "Army orders rare earth magnets", "summary": "A summary.",
+             "link": "https://x.test/a", "body": "Full body text."},
+            {"title": "Grid queue lengthens", "summary": None},  # old-style dict
         ],
     )
     monkeypatch.setattr(candidate_scout.rss, "discovery_config",
@@ -40,7 +41,9 @@ def mocked_sources(monkeypatch):
         candidate_scout, "edgar_term_trend",
         lambda conn, terms: [
             {"term": "reshoring", "filings_last_30d": 3, "filings_prior_30d": 5},
-            {"term": "grid", "filings_last_30d": 18, "filings_prior_30d": 12},
+            {"term": "grid", "filings_last_30d": 18, "filings_prior_30d": 12,
+             "filers": [{"display": "GridCo (GRID) (CIK 9)", "form": "10-Q",
+                         "file_date": "2026-07-15"}]},
             {"term": "smr", "filings_last_30d": None, "filings_prior_30d": 4},
         ],
     )
@@ -61,6 +64,14 @@ def test_ids_directions_and_summaries(conn, mocked_sources):
         # NO DATA terms are not citable; everything else is
         assert ctx.issued_ids == {"H1", "H2", "E1", "E2"}
         assert ctx.edgar_directions == {"E1": "DECLINED", "E2": "ROSE"}
+        # funnel raw material: per-ID items, terms, filers, rendered lines
+        assert ctx.headline_items["H1"]["body"] == "Full body text."
+        assert ctx.headline_items["H2"].get("link") is None  # old-style dict ok
+        assert ctx.edgar_terms == {"E1": "reshoring", "E2": "grid"}
+        assert ctx.edgar_filers["E2"][0]["display"] == "GridCo (GRID) (CIK 9)"
+        assert ctx.edgar_filers["E1"] == []  # trend without filers key
+        assert ctx.evidence_lines["H1"] == "- [H1] Army orders rare earth magnets — A summary."
+        assert ctx.evidence_lines["E2"] == '- [E2] "grid": ROSE 12 -> 18'
         raise psycopg.Rollback
 
 
