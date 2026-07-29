@@ -384,6 +384,70 @@ words, tables/charts/footnotes excluded)** — thoroughness over brevity.
   Final W30 state: both reports complete, all sections Sonnet-approved,
   4,166 / 4,780 body words.
 
+**bar_pin resolution CLI shipped + first use (2026-07-28).** Stage 3 designed
+the vendor-restatement resolution (manifest overlay via `bar_pin_assertion_ids`)
+but never built the human entry point. Added `ops.approve pin <symbol>
+--rationale` — inserts the HUMAN assertion ({doc_hash_old, doc_hash_new,
+through_session=max nav_date}), marks the symbol's OPEN REVISION incidents
+RESOLVED_HUMAN, and `restatement_guard` now skips pinning when an assertion
+accepts the exact candidate doc (adoption goes forward; replay history stays
+on old bars ≤ through_session — fills never restate). Covered by
+`test_bar_pin_assertion_unpins_and_resolves`. First use: DUK, where Tiingo
+dropped the 2026-06-12 div_cash 0.3516→0.0; ledger was empty so adoption was
+materially free (human decision, jared, 2026-07-28). Note: the Gate-C test
+suite runs against the dev Postgres — an unresolved live restatement leaks
+into `pinned_symbols` and fails the guard tests until resolved.
+
+**Scout anti-hallucination overhaul (2026-07-29).** The nightly scout was
+0-for-2 with the review gate since outcome logging began (07-27, 07-28 —
+both rejected for fabricated tickers/companies/figures and a misread EDGAR
+direction), because the mandatory nightly proposal demanded a 4-paragraph
+per-ticker decision document while the context supplied only headline titles
+and raw EDGAR hit-count JSON — the specificity gap got filled from model
+memory. Shipped (plan reviewed with Jared in-session):
+- **Deterministic precheck** (`research/proposal_checks.py`, migration 007):
+  evidence items carry citation IDs (`[Hn]`/`[En]`) the proposal must
+  reference; EDGAR trends render explicit ROSE/DECLINED/FLAT/NO DATA labels
+  (a DECLINED term cited with rising language is flagged); proposed tickers
+  are validated against a weekly-refreshed Tiingo `symbol_directory`
+  (105k tickers, unmetered zip download, zero curation). Precheck failures
+  regenerate locally without spending a Sonnet review attempt; exhaustion
+  still reaches the reviewer — never a silent drop. `scout_attempts` records
+  every PRECHECK/REVIEW event (the readout instrument for ~10 sessions out).
+- **US-only symbol rule (human, 2026-07-29)**: scout tickers must be
+  NYSE/NASDAQ/AMEX-listed stocks — no foreign listings, no OTC/ADRs. A
+  foreign-only pure-play is dropped and the gap noted, never substituted.
+- **Automatic identity enrichment**: the ≤6 proposed tickers get Tiingo meta
+  name/description cached into the directory (~6 metered calls/night, mostly
+  cache hits) and rendered into the review context as a SYMBOL DIRECTORY
+  CHECK block — the reviewer audits company identity against authoritative
+  data, not parametric memory (kills the ALTR-class wrong-company failure).
+- **Grounding enrichment**: RSS context now carries item summaries (400-char
+  cap, stdlib HTML strip), not just titles; recently-REJECTED proposals
+  (14d) render into context with critiques so the scout stops re-proposing
+  the same family (07-27/07-28 were near-identical rare-earth themes); the
+  reviewer's scout context_cap rose 12k→40k chars so it can actually verify
+  citations (it was auditing against truncated evidence).
+- **Conviction + rubric rebalance (human ruling)**: proposals self-declare
+  `conviction: low|medium|high`; the new `SCOUT_REVIEW_SYSTEM` makes factual
+  grounding the hard bar but explicitly APPROVES an honest low-conviction
+  proposal (thin evidence flagged, every claim grounded) — the human makes
+  the accept/reject call at `ops.approve`. Honest-thin and fabricated-thick
+  previously both rejected, which pressured the model to fabricate.
+  Conviction is recorded on scout_outcomes and rendered in the briefing.
+- **Experiment ruling (human, 2026-07-29)**: the scout *proposer* model is
+  research-layer config, NOT an engine experiment condition (same class as
+  the 2026-07-25 Report Assembler ruling — its output is JUDGMENT-only and
+  never feeds a forecast, basket, or order). Model switches for the scout
+  are allowed but must be tracked here with tag+digest+date.
+  `stage1_slice.llm.scout_model_tag` overrides the scout's model only; the
+  four engine roles keep the frozen `qwen3:30b-a3b`. PLANNED (ship ~1 week
+  after these grounding fixes so improvement stays attributable): swap the
+  scout to `qwen3.6:35b` (Qwen3.6-35B-A3B, Apr 2026 — same 3B-active MoE
+  class on this hardware, materially better instruction-following and
+  long-tail knowledge than the Apr-2025 tag). Record the pulled digest here
+  at swap time.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

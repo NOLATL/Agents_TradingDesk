@@ -22,7 +22,8 @@
 - **Timers live:** daily monitor Mon–Fri 23:00 ET (ledger → milestones + daily status rows → report → research intake) → backup 02:30 → weekly deep dives **Fri 23:45 ET** (one per accepted theme). `fleet-economics*` timers retired. Alerts: ntfy topic in `.env`.
 - **Your daily job:** the briefing shows the theme queue (one acceptance slot per day, all sources), any REVIEWED theses awaiting your call, one monitoring line per active thesis, and pending orders. Decide with `uv run python -m ops.approve` (`theme accept|reject`, `thesis accept|reject`, `dead`, plus the order gate) — the desk does nothing until you do. CAUSAL_BREAK/TIME_STOP approvals are the confirmation events.
 - **Queue at cutover:** 16 CANDIDATE themes (2 genesis candidates + 14 migrated from Agents_Economics, 7 flagged `[in-flight bet]`) trickling through the 1/day accept cap.
-- 227 tests pass; Stage 2 replay suite green, including the new mid-run-activation determinism test.
+- **Scout anti-hallucination overhaul shipped 2026-07-29** (DECISIONS.md): deterministic precheck (Tiingo symbol directory + evidence-ID citations + EDGAR direction labels), RSS summaries in context, conviction field + rebalanced review rubric (honest low-conviction proposals now approvable — you decide at `ops.approve`), `scout_attempts` instrument for the readout. US-only ticker rule (your call). Scout model swap to `qwen3.6:35b` planned ~1 week out (research-layer ruling; config comment in experiment.yaml).
+- 310 tests pass; Stage 2 replay suite green, including the new mid-run-activation determinism test.
 
 ## Gate C — Operational Integrity (running; code-provable items done)
 
