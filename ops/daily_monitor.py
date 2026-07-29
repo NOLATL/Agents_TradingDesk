@@ -85,17 +85,20 @@ def finish_cycle(conn, cycle: CycleLog, status: str, phase: str, error: str | No
 def record_scout_outcome(
     conn, session: date, outcome: str,
     slug: str | None = None, title: str | None = None, detail: str | None = None,
+    conviction: str | None = None,
 ) -> None:
-    """One transparency row per session (migration 006). The daily report
-    renders the latest row, so the briefing confirms the scout ran even on
-    nights when review rejects and nothing enters the queue. Upsert: a
-    re-run after a FAILED cycle records its own outcome. Does not commit."""
+    """One transparency row per session (migration 006; conviction added in
+    007). The daily report renders the latest row, so the briefing confirms
+    the scout ran even on nights when review rejects and nothing enters the
+    queue. Upsert: a re-run after a FAILED cycle records its own outcome.
+    Does not commit."""
     conn.execute(
-        "INSERT INTO scout_outcomes (session_date, outcome, slug, title, detail)"
-        " VALUES (%s, %s, %s, %s, %s)"
+        "INSERT INTO scout_outcomes (session_date, outcome, slug, title, detail, conviction)"
+        " VALUES (%s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (session_date) DO UPDATE SET outcome = EXCLUDED.outcome,"
-        "  slug = EXCLUDED.slug, title = EXCLUDED.title, detail = EXCLUDED.detail",
-        (session, outcome, slug, title, detail),
+        "  slug = EXCLUDED.slug, title = EXCLUDED.title, detail = EXCLUDED.detail,"
+        "  conviction = EXCLUDED.conviction",
+        (session, outcome, slug, title, detail, conviction),
     )
 
 
@@ -118,15 +121,28 @@ def intake(conn, session: date) -> None:
 
     rss_adapter.ingest_all()
 
+    # Symbol directory for the proposal precheck (007): weekly Tiingo
+    # supported-tickers refresh. Best-effort — a failure skips validation
+    # for the night, never blocks the mandatory proposal.
+    try:
+        from data.adapters.tiingo import refresh_symbol_directory
+        refresh_symbol_directory(conn)
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        print(f"symbol directory refresh failed (precheck skipped): {e}",
+              file=sys.stderr)
+
     # One mandatory proposal per session (user decision 2026-07-23). Any
     # no-theme outcome besides an idempotent re-run raises and notifies —
     # a silent zero-candidate day is no longer a valid result.
     try:
-        theme = scout(conn)
+        theme = scout(conn, session)
         # theme is None only on an idempotent re-run — the earlier run
         # already recorded its outcome; leave that row alone.
         if theme is not None:
-            record_scout_outcome(conn, session, "PROPOSED", theme.slug, theme.title)
+            record_scout_outcome(
+                conn, session, "PROPOSED", theme.slug, theme.title,
+                conviction=theme.research_config.get("conviction"))
         conn.commit()
         if theme is not None:
             notify(
@@ -136,9 +152,13 @@ def intake(conn, session: date) -> None:
                 priority="default", tags="bulb",
             )
     except ReviewRejected as e:
-        conn.rollback()
+        # Commit, not rollback: nothing enters the queue on this path
+        # (propose_theme never ran), and the only pending writes are the
+        # scout_attempts instrument rows, which must survive the night.
+        conn.commit()
         record_scout_outcome(conn, session, "REJECTED",
-                             e.proposal.slug, e.proposal.title, e.critique)
+                             e.proposal.slug, e.proposal.title, e.critique,
+                             conviction=e.proposal.conviction)
         conn.commit()
         notify(
             "Scout proposal failed review — no candidate today",

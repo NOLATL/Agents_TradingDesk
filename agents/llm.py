@@ -57,14 +57,14 @@ def model_digest(tag: str) -> str:
     return "unknown"
 
 
-_DIGEST: str | None = None
+_DIGESTS: dict[str, str] = {}
 
 
-def cached_digest() -> str:
-    global _DIGEST
-    if _DIGEST is None:
-        _DIGEST = model_digest(LLM_CFG["model_tag"])
-    return _DIGEST
+def cached_digest(tag: str | None = None) -> str:
+    tag = tag or LLM_CFG["model_tag"]
+    if tag not in _DIGESTS:
+        _DIGESTS[tag] = model_digest(tag)
+    return _DIGESTS[tag]
 
 
 def _extract_json(content: str) -> str:
@@ -98,12 +98,18 @@ def structured_call(
     user_prompt: str,
     schema: type[S],
     temperature: float = 0.2,
+    model_tag: str | None = None,
 ) -> S:
-    """One schema-validated LLM call, fully logged to agent_runs."""
+    """One schema-validated LLM call, fully logged to agent_runs.
+
+    model_tag overrides the pinned engine model for research-layer callers
+    (e.g. the scout, per the 2026-07-29 ruling); the four engine roles never
+    pass it and keep the frozen tag."""
+    tag = model_tag or LLM_CFG["model_tag"]
     run = AgentRun(
         experiment_id=experiment_id,
         role=role,
-        model_tag=LLM_CFG["model_tag"] + "@" + cached_digest(),
+        model_tag=tag + "@" + cached_digest(tag),
         prompt_version=_sha(system_prompt),
         input_hash=_sha(system_prompt + "\x00" + user_prompt),
         started_at=datetime.now(timezone.utc),
@@ -129,7 +135,7 @@ def structured_call(
         response = httpx.post(
             f"{LLM_CFG['base_url']}/chat/completions",
             json={
-                "model": LLM_CFG["model_tag"],
+                "model": tag,
                 "messages": messages,
                 "temperature": temperature,
                 "response_format": {"type": "json_object"},

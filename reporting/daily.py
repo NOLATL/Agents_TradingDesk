@@ -106,16 +106,20 @@ def _scout_outcome_lines(conn, session: date) -> list[str]:
     """The scout transparency line (migration 006): confirms the nightly
     scout ran and says what happened, even when nothing entered the queue."""
     row = conn.execute(
-        "SELECT session_date, outcome, slug, title, detail FROM scout_outcomes"
-        " ORDER BY session_date DESC LIMIT 1"
+        "SELECT session_date, outcome, slug, title, detail, conviction"
+        " FROM scout_outcomes ORDER BY session_date DESC LIMIT 1"
     ).fetchone()
     if row is None:
         return []
-    d, outcome, slug, title, detail = row
+    d, outcome, slug, title, detail, conviction = row
     when = "Nightly scout" if d == session else f"Nightly scout (last ran {d})"
+    conviction_note = (
+        f" Scout conviction: **{conviction.upper()}**." if conviction else ""
+    )
     if outcome == "PROPOSED":
         return ["", f"{when}: ran and proposed `{slug}` — **{title}**."
-                    " Review approved it; it is in the queue below.", ""]
+                    " Review approved it; it is in the queue below."
+                    + conviction_note, ""]
     if outcome == "REJECTED":
         reason = (detail or "").strip()
         if len(reason) > 1000:
