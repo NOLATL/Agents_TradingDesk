@@ -173,6 +173,38 @@ def test_restatement_guard_pins_and_classifies(conn):
         raise psycopg.Rollback
 
 
+def test_bar_pin_assertion_unpins_and_resolves(conn):
+    from ops.approve import pin_restatement
+
+    with conn.transaction():
+        exp, sessions = setup_live(conn, [(1, "AAA", OrderSide.BUY, "10")])
+        live_run.run(conn, sessions[5], commit=False)
+
+        def corrupt(i, row):
+            if i == 2:
+                row["open"] = row["open"] + 5
+        add_doc(conn, "AAA", tiingo_rows(sessions, 100, corrupt), "v2",
+                ingested=INGESTED + timedelta(days=1))
+        summary = live_run.run(conn, sessions[6], commit=False)
+        assert summary.pinned_symbols == ("AAA",)
+
+        aid, resolved, _, _ = pin_restatement(conn, "AAA", "vendor correction accepted")
+        assert resolved >= 1
+        summary = live_run.run(conn, sessions[7], commit=False)
+        assert summary.pinned_symbols == ()           # new doc adopted
+        n_open = conn.execute(
+            "SELECT count(*) FROM data_incidents WHERE incident_class='REVISION'"
+            " AND symbol='AAA' AND status='OPEN'").fetchone()[0]
+        assert n_open == 0
+        # Replay overlays the old bars <= through_session: the persisted trade
+        # prefix survives adoption (no PrefixBreach), trades unchanged.
+        n_trades = conn.execute(
+            "SELECT count(*) FROM trades t JOIN orders o ON t.order_id=o.id"
+            " WHERE o.experiment_id=%s", (exp.id,)).fetchone()[0]
+        assert n_trades == 1
+        raise psycopg.Rollback
+
+
 def test_adjusted_rescale_does_not_trigger_guard(conn):
     with conn.transaction():
         exp, sessions = setup_live(conn, [(1, "AAA", OrderSide.BUY, "10")])

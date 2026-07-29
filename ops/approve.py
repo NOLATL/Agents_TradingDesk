@@ -619,6 +619,52 @@ def interactive() -> None:
                     break
 
 
+def pin_restatement(conn, symbol: str, rationale: str):
+    """Resolve a vendor-restatement REVISION incident (invariant 8). The
+    HUMAN bar_pin assertion accepts the newest document going forward;
+    replayed history stays on the previously-adopted bars for sessions
+    <= through_session via the manifest overlay (persist._apply_bar_pins).
+    Fills are historical facts; never restated."""
+    from data.price_bars import _latest_docs_by_symbol
+
+    symbol = symbol.upper()
+    candidate = _latest_docs_by_symbol(conn).get(symbol)
+    if candidate is None:
+        raise ValueError(f"no tiingo documents for {symbol}")
+    row = conn.execute(
+        "SELECT source_doc_hash FROM price_bars WHERE symbol = %s LIMIT 1",
+        (symbol,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no persisted bars for {symbol} — nothing was restated")
+    adopted = row[0]
+    if adopted == candidate.content_hash:
+        raise ValueError(f"{symbol}: newest document already adopted — nothing to pin")
+    through = conn.execute("SELECT max(nav_date) FROM daily_nav").fetchone()[0]
+    if through is None:
+        raise ValueError("no replayed sessions yet — nothing to pin against")
+    now = datetime.now(timezone.utc)
+    aid = repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN,
+            value={"kind": "bar_pin", "symbol": symbol,
+                   "doc_hash_old": adopted,
+                   "doc_hash_new": candidate.content_hash,
+                   "through_session": through.isoformat()},
+            human_rationale=rationale,
+            created_at=now,
+        ),
+    )
+    resolved = conn.execute(
+        "UPDATE data_incidents SET status = 'RESOLVED_HUMAN', resolved_at = %s,"
+        " resolution_assertion_id = %s WHERE symbol = %s AND status = 'OPEN'"
+        " AND incident_class = 'REVISION'",
+        (now, aid, symbol),
+    ).rowcount
+    return aid, resolved, candidate.content_hash, through
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ops.approve", description=__doc__)
     parser.add_argument("--list", action="store_true", help="read-only order view")
@@ -659,6 +705,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("doc_id", type=int)
     p.add_argument("--out", default=None, help="write to a file instead of stdout")
+
+    p = sub.add_parser(
+        "pin", help="resolve a vendor restatement: adopt the newest document;"
+        " replay keeps the previously-adopted bars <= through_session"
+    )
+    p.add_argument("symbol")
+    p.add_argument("--rationale", required=True)
     return parser
 
 
@@ -718,6 +771,15 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"wrote documents #{args.doc_id} to {args.out}")
                 else:
                     print(text)
+            elif args.command == "pin":
+                aid, resolved, new_hash, through = pin_restatement(
+                    conn, args.symbol, args.rationale
+                )
+                print(
+                    f"PINNED {args.symbol.upper()}: assertion A{aid} adopts doc "
+                    f"{new_hash[:12]}; replay keeps adopted bars through {through}; "
+                    f"{resolved} REVISION incident(s) resolved"
+                )
             elif args.command == "dead":
                 orders = mark_dead(conn, args.thesis_id, args.rationale)
                 if orders:

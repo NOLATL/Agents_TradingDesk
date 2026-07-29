@@ -119,6 +119,17 @@ def restatement_guard(
         candidate = latest[symbol]
         if candidate.content_hash == current_hash:
             continue
+        # A HUMAN bar_pin assertion accepting this exact candidate resolves
+        # the restatement (ops.approve pin): the new document is adopted into
+        # price_bars, and replayed history stays on the previously-adopted
+        # bars via the manifest overlay (_apply_bar_pins) — determinism holds.
+        if conn.execute(
+            "SELECT 1 FROM assertions WHERE type = 'HUMAN'"
+            " AND value->>'kind' = 'bar_pin' AND value->>'symbol' = %s"
+            " AND value->>'doc_hash_new' = %s",
+            (symbol, candidate.content_hash),
+        ).fetchone():
+            continue
         new_bars = {b.session: b for b in parse_bars(candidate, symbol)}
         diffs = []
         for session, row in sorted(current_rows.items()):
