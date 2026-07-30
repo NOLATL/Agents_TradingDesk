@@ -209,10 +209,15 @@ def existing_coverage(conn) -> list[str]:
 
 def _candidate_exists_today(conn) -> bool:
     """Idempotency gate: has the scout already proposed today? HUMAN proposals
-    never block the scout — the daily proposal is the scout's own output."""
+    never block the scout — the daily proposal is the scout's own output.
+    A theme the human has already TERMINALLY REJECTED does not count either
+    (human decision 2026-07-29): an explicit reject before the nightly run
+    frees the session's slot for a fresh proposal — the gate exists to make
+    re-RUNS idempotent, not to waste a session on a dead candidate."""
     return bool(conn.execute(
         "SELECT 1 FROM themes WHERE source <> 'HUMAN'"
-        " AND proposed_on = %s AND NOT backfilled",
+        " AND proposed_on = %s AND NOT backfilled"
+        " AND NOT (status = 'CLOSED' AND closed_reason = 'user_rejected')",
         (today_et(),),
     ).fetchone())
 

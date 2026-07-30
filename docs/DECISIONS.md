@@ -492,6 +492,15 @@ EDGAR hit-counts. Shipped:
   `fetch_and_cache` gained `follow_redirects`.
 - Watch item for the first 3 nightlies: IDEA_GATE kill-rate — if the
   "generous" gate kills >1 idea/night as duplicates, loosen its prompt.
+- **Human reject frees the session slot (human decision, jared, 2026-07-29):**
+  after rejecting `maritime-logistics-volatility` (thin inferential evidence)
+  Jared asked for a fresh run the same night. `_candidate_exists_today` now
+  ignores themes with `status=CLOSED AND closed_reason=user_rejected` — the
+  gate exists to make re-runs idempotent, not to waste a session on a dead
+  candidate. Undecided candidates still block (one live proposal per
+  session); invariant 9's acceptance cap is untouched. Note: the session's
+  scout_outcome row is upserted by the fresh run; the rejected theme's own
+  row + HUMAN assertion remain the durable record.
 
 ## Deferred ideas (noted, not built)
 

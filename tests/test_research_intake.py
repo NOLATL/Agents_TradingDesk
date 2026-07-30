@@ -181,6 +181,30 @@ def test_clean_proposal_gets_one_identity_refinement_pass(conn, monkeypatch, moc
         raise psycopg.Rollback
 
 
+def test_human_rejected_theme_frees_the_session_slot(conn, monkeypatch, mock_context):
+    """Human decision 2026-07-29: a terminal reject before the nightly run
+    frees the slot — the scout proposes fresh instead of idempotent-skipping."""
+    from ops.approve import propose_theme, reject_theme
+    from schemas.enums import ThemeSource
+
+    _mock_scout_llm(monkeypatch, proposal(slug="ri-after-reject"))
+    monkeypatch.setattr(
+        review_gate, "review",
+        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+    )
+    with conn.transaction():
+        clear_todays_scout_theme(conn)
+        propose_theme(conn, "ri-rejected-today", "Dead idea", ["EEE"],
+                      source=ThemeSource.AGENT, commit=False)
+        # un-rejected AGENT proposal today → idempotent skip
+        assert candidate_scout.scout(conn) is None
+        reject_theme(conn, "ri-rejected-today", "test reject", commit=False)
+        # terminally rejected → slot freed, fresh proposal lands
+        theme = candidate_scout.scout(conn)
+        assert theme is not None and theme.slug == "ri-after-reject"
+        raise psycopg.Rollback
+
+
 def test_funnel_crash_falls_back_to_single_pass(conn, monkeypatch, mock_context):
     """The mandatory-proposal invariant: a funnel failure degrades to the
     current pipeline and leaves a failed IDEA_GATE instrument row."""
