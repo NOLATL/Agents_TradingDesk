@@ -1,0 +1,51 @@
+# Data contract: Wikipedia S&P 500 constituents (DECISIONS.md 2026-07-29,
+# "Momentum scan"). Reference data for the operator-only momentum scan:
+# GICS sector + sub-industry per constituent, doubling as the membership
+# list. Chosen over the Tiingo Fundamentals add-on (paid, SIC-approximated
+# GICS) — human decision 2026-07-29.
+source_name: wikipedia_sp500
+description: >
+  Weekly snapshot of the "List of S&P 500 companies" Wikipedia page —
+  constituents table with GICS sector and sub-industry.
+endpoints:
+  - https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
+auth: none (descriptive User-Agent per Wikimedia policy)
+
+data_semantics:
+  content: >
+    HTML page; the <table id="constituents"> wikitable carries ticker,
+    security name, GICS sector, GICS sub-industry, CIK, date added. Parsed
+    derive-on-read into sp500_constituents (full replace per snapshot, with
+    snapshot_doc_hash provenance) — like symbol_directory, a reference table
+    rebuildable from the newest cached document.
+  session_date_rule: >
+    Reference data — never a decision input. first_eligible_decision_time =
+    ingestion_time, mirroring the symbol_directory rule.
+  null_rule: >
+    A malformed table row is an absence (skipped), never repaired or
+    interpolated. A page revision that drops the constituents table entirely
+    fails the refresh loudly; the previous snapshot stays authoritative.
+  NOT_point_in_time: >
+    Forward-only snapshots. This source must never be used to reconstruct
+    historical index membership (anti-scope: no point-in-time constituent
+    data; controls run forward, not historically).
+
+revision_policy: >
+  The page changes continuously (index changes, edits). Every fetch caches
+  immutably to documents; a changed page is a new hash. sp500_constituents
+  always reflects exactly one snapshot (its snapshot_doc_hash).
+
+source_priority: 1               # only source for GICS classification
+fallback_sources: []
+expected_publication_delay: >
+  Index changes typically appear within a day of the S&P announcement;
+  weekly refresh (max_age 7d) is ample for scan-report context.
+
+rate_limit: >
+  One request per week (freshness-gated). Wikimedia asks for a descriptive
+  User-Agent and modest request rates — both honored.
+
+license_permitted_use: >
+  CC BY-SA 4.0 (page text). Cached raw HTML stays local and is never
+  republished; the scan report derives facts (ticker → GICS mapping), not
+  redistributed page content.

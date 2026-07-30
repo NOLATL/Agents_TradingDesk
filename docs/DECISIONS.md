@@ -502,6 +502,61 @@ EDGAR hit-counts. Shipped:
   scout_outcome row is upserted by the fresh run; the rejected theme's own
   row + HUMAN assertion remain the durable record.
 
+## 2026-07-29 — Momentum scan: operator-only technical vector (human-directed)
+
+Jared asked for a technical momentum evaluation surfacing "pockets" of
+momentum (sector/industry/supply-chain upticks) as a new hypothesis vector.
+Four human decisions shaped it (2026-07-29):
+
+- **New data source: Wikipedia S&P 500 constituents** (`wikipedia_sp500`,
+  `contracts/wikipedia_sp500.yaml`) — weekly forward-only snapshot into
+  immutable `documents`, derive-on-read `sp500_constituents` (migration 009).
+  CC BY-SA; cached locally, never republished; reference data only, never a
+  decision input. Explicitly NOT point-in-time constituent history (the
+  anti-scope stands). Chosen over the paid Tiingo Fundamentals add-on.
+- **Tiingo stays on the FREE tier** (evaluated Power $30/mo and declined for
+  now): the scan universe is ~39 curated sector/industry/theme ETFs
+  (`config/experiment.yaml` `scan.pockets`), not 503 single names. Budget
+  accounting: requests/day ≈ 30–40 nightly + ≤45 scan ≪ 1000; unique
+  symbols/month = 39 fixed ETFs + theme universe (grows ~5/accepted theme)
+  + scout meta lookups, tracked against the 500 cap — changing the pocket
+  list costs new uniques. The scan runs in its own clock hour (00:30 ET,
+  `trading-desk-scan.timer`) for the 50-symbols/hour limit; scan 429s
+  degrade gracefully (skip-and-note) while the core desk keeps halt-loudly.
+- **The scan is operator-only and QUARANTINED (invariant 5).** Ingestion
+  uses `source_name='tiingo_scan'`, keeping scan ETFs out of `price_bars`,
+  the restatement guard, Gate B fingerprints, and every engine surface
+  (guard tests in `tests/test_price_bars.py` / `tests/test_momentum_scan.py`).
+  Output (repo `reporting/output/momentum-scan/` + vault mirror) never
+  enters analyst/scout LLM context, `theme_symbols`, or basket construction
+  — it exists for the HUMAN to form theses from, and keeping it out of the
+  desk preserves the momentum-control comparison. Algorithm: 5d/21d/63d
+  returns, cross-sectionally z-scored, composite = mean (pure
+  `analytics/scan.py`); prior-scan deltas are RECOMPUTED from the same
+  immutable documents truncated at the prior session — no stored scan state.
+- **Scan narrator: local Qwen, not Sonnet (human choice).** A Report
+  Assembler call (`agents/roles/scan_narrator.py`) writes the report's lead
+  over the computed values, contained by `narrative_guard` number-tracing
+  (retry-with-critique; guard-exhausted → section dropped, scan never
+  blocks). A new, isolated LLM touchpoint with price-derived numbers —
+  precedented by the reviewer's price-narrative check; output flows only
+  into the operator report, never into any assertion table. Escalating the
+  narrator model is a one-line config change (`scan.narrator_model`).
+- Note: `config/experiment.yaml`'s file sha256 changes with the new `scan:`
+  block; experiment identity (the `frozen:` block + EngineConfig manifest
+  hash) is untouched — nothing under `frozen:` or `engine:` moved.
+- **Layer-1 bug found & fixed while wiring the narrator (infra ruling):**
+  yesterday's native `/api/chat` switch made `format` constrained decoding
+  live, and llama.cpp's grammar compiler fails on string `maxLength`
+  ("Failed to initialize samplers: failed to parse grammar") — every
+  `SectionDraft`/narrative call 400s, which would have broken the FIRST
+  Friday deep dive after the switch (2026-07-31). `agents/llm.py` now sends
+  `format_schema()` — the schema minus string `maxLength` (list `maxItems`
+  kept; the nightly funnel schemas prove those parse). Decoding guidance
+  only: Pydantic still validates the full schema, maxLength included, on
+  parse. Same class as the native-endpoint ruling — transport change, same
+  models/prompts/prompt_version hashes, NOT an experiment condition.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

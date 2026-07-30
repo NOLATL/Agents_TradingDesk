@@ -82,3 +82,22 @@ def test_every_bar_references_an_immutable_document(conn):
         ).fetchone()[0]
         assert n == 0
         raise psycopg.Rollback
+
+def test_scan_documents_never_enter_price_bars(conn):
+    """Invariant-5 isolation (momentum scan, DECISIONS.md 2026-07-29): a
+    tiingo_scan document is invisible to the rebuild — scan ETFs must never
+    perturb price_bars, the restatement guard, or Gate B fingerprints."""
+    with conn.transaction():
+        rebuild_price_bars(conn)
+        fp_before = table_fingerprint(conn)
+        scan_doc = tiingo_doc("ZZSCAN", ROWS_V1, NOW, "scan")
+        repo.insert_document(
+            conn, scan_doc.model_copy(update={"source_name": "tiingo_scan"})
+        )
+        rebuild_price_bars(conn)
+        assert table_fingerprint(conn) == fp_before
+        n = conn.execute(
+            "SELECT count(*) FROM price_bars WHERE symbol='ZZSCAN'"
+        ).fetchone()[0]
+        assert n == 0
+        raise psycopg.Rollback

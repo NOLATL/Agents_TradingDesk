@@ -120,3 +120,80 @@ stage3:
     daily_monitor: "23:00 America/New_York (post-close; Tiingo composite final)"
     weekly_research: "Fri 23:45 America/New_York (per accepted theme; spec 2026-07-22)"
     backup: "02:30 local (after the monitor)"
+    momentum_scan: "Tue-Sat 00:30 America/New_York (own rate-limit hour; after the monitor)"
+
+# Operator-only momentum scan (DECISIONS.md 2026-07-29 "Momentum scan").
+# QUARANTINED (invariant 5): output is a human hypothesis vector only — never
+# LLM analyst/scout context, theme_symbols, basket construction, or the
+# engine. NOT under frozen: and NOT under engine: — experiment identity
+# (frozen block + EngineConfig hash) is untouched by anything here.
+scan:
+  enabled: true
+  horizons_sessions: [5, 21, 63]            # ~week / month / quarter
+  max_fetches_per_run: 45                   # Tiingo free tier: 50 symbols/hour
+  constituents_max_age_days: 7              # weekly Wikipedia snapshot
+  constituents_stale_alert_days: 21
+  narrator_model: null                      # null → stage1_slice.llm.model_tag
+  # Pocket universe: each ETF IS a sector/industry/theme pocket. kind is
+  # sector | industry | theme-etf ("theme-etf" avoids colliding with desk
+  # theme vocabulary). gics_sub_industries (optional) drives the report's
+  # "inside the pocket" context lines from sp500_constituents.
+  pockets:
+    - {ticker: XLB,  name: Materials,              kind: sector}
+    - {ticker: XLC,  name: Communication Services, kind: sector}
+    - {ticker: XLE,  name: Energy,                 kind: sector}
+    - {ticker: XLF,  name: Financials,             kind: sector}
+    - {ticker: XLI,  name: Industrials,            kind: sector}
+    - {ticker: XLK,  name: Technology,             kind: sector}
+    - {ticker: XLP,  name: Consumer Staples,       kind: sector}
+    - {ticker: XLRE, name: Real Estate,            kind: sector}
+    - {ticker: XLU,  name: Utilities,              kind: sector}
+    - {ticker: XLV,  name: Health Care,            kind: sector}
+    - {ticker: XLY,  name: Consumer Discretionary, kind: sector}
+    - {ticker: SMH,  name: Semiconductors,         kind: industry,
+       gics_sub_industries: [Semiconductors, "Semiconductor Materials & Equipment"]}
+    - {ticker: IGV,  name: Software,               kind: industry,
+       gics_sub_industries: [Systems Software, Application Software]}
+    - {ticker: FDN,  name: Internet,               kind: industry}
+    - {ticker: CIBR, name: Cybersecurity,          kind: industry}
+    - {ticker: XHB,  name: Homebuilders,           kind: industry,
+       gics_sub_industries: [Homebuilding, Building Products]}
+    - {ticker: ITA,  name: Aerospace & Defense,    kind: industry,
+       gics_sub_industries: ["Aerospace & Defense"]}
+    - {ticker: JETS, name: Airlines,               kind: industry,
+       gics_sub_industries: [Passenger Airlines]}
+    - {ticker: IYT,  name: Transports,             kind: industry,
+       gics_sub_industries: [Rail Transportation, "Air Freight & Logistics",
+                             Cargo Ground Transportation]}
+    - {ticker: BOAT, name: Global Shipping,        kind: theme-etf}
+    - {ticker: XRT,  name: Retail,                 kind: industry,
+       gics_sub_industries: [Broadline Retail, Apparel Retail, Automotive Retail]}
+    - {ticker: XBI,  name: Biotech,                kind: industry,
+       gics_sub_industries: [Biotechnology]}
+    - {ticker: PPH,  name: Pharma,                 kind: industry,
+       gics_sub_industries: [Pharmaceuticals]}
+    - {ticker: OIH,  name: Oil Services,           kind: industry,
+       gics_sub_industries: ["Oil & Gas Equipment & Services"]}
+    - {ticker: XOP,  name: Oil & Gas E&P,          kind: industry,
+       gics_sub_industries: ["Oil & Gas Exploration & Production"]}
+    - {ticker: URA,  name: Uranium,                kind: theme-etf}
+    - {ticker: NLR,  name: Nuclear Energy,         kind: theme-etf}
+    - {ticker: GRID, name: Smart Grid,             kind: theme-etf,
+       gics_sub_industries: ["Electrical Components & Equipment"]}
+    - {ticker: PAVE, name: US Infrastructure,      kind: theme-etf}
+    - {ticker: TAN,  name: Solar,                  kind: theme-etf}
+    - {ticker: KBE,  name: Banks,                  kind: industry,
+       gics_sub_industries: [Diversified Banks]}
+    - {ticker: KRE,  name: Regional Banks,         kind: industry,
+       gics_sub_industries: [Regional Banks]}
+    - {ticker: XME,  name: Metals & Mining,        kind: industry,
+       gics_sub_industries: [Steel, Copper, "Diversified Metals & Mining", Gold]}
+    - {ticker: GDX,  name: Gold Miners,            kind: theme-etf}
+    - {ticker: COPX, name: Copper Miners,          kind: theme-etf}
+    - {ticker: SLX,  name: Steel,                  kind: industry,
+       gics_sub_industries: [Steel]}
+    - {ticker: MOO,  name: Agribusiness,           kind: theme-etf,
+       gics_sub_industries: ["Fertilizers & Agricultural Chemicals",
+                             "Agricultural & Farm Machinery"]}
+    - {ticker: LIT,  name: Lithium & Battery,      kind: theme-etf}
+    - {ticker: BOTZ, name: Robotics & AI,          kind: theme-etf}

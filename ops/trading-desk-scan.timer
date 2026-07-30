@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading desk momentum scan at 00:30 ET Tue-Sat (own Tiingo rate-limit hour)
+
+[Timer]
+OnCalendar=Tue..Sat *-*-* 00:30:00 America/New_York
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
+# ln -sf ~/projects/Agents_TradingDesk/ops/trading-desk-scan.{service,timer} ~/.config/systemd/user/

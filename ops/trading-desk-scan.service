@@ -1,0 +1,7 @@
+[Unit]
+Description=Trading desk momentum scan (operator-only pocket report; quarantined from analyst)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/Agents_TradingDesk
+ExecStart=%h/.local/bin/uv run python -m ops.momentum_scan

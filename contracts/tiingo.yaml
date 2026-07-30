@@ -48,7 +48,15 @@ rate_limit: >
   Free tier: 1000 requests/day, 50 symbols/hour, 500 unique symbols/month.
   The 5-symbol slice is far inside all three. The 500-name Stage 3 universe
   requires the paid tier — recorded as a known scaling cost, decided when
-  Stage 3 planning happens. On 429, halt and raise STALE_DATA, do not retry.
+  Stage 3 planning happens (2026-07-29: human chose to STAY on the free tier;
+  the momentum scan uses a ~39-ETF pocket universe instead of S&P 500 single
+  names). On 429, halt and raise STALE_DATA, do not retry.
+  Budget sharing (DECISIONS.md 2026-07-29 "Momentum scan"): the nightly
+  23:00 ET desk ingest (~20-35 symbols) and the 00:30 ET scan window
+  (source_name tiingo_scan, capped at scan.max_fetches_per_run=45) each stay
+  inside their own clock hour. Scan 429s degrade gracefully — remaining
+  pockets are SKIPPED and noted in the report, never retried that night —
+  while the core desk keeps this halt-loudly rule.
 
 license_permitted_use: >
   Tiingo EULA (free tier): data for personal/internal use with attribution;

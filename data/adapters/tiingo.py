@@ -68,6 +68,38 @@ def ingest_symbol(conn, symbol: str) -> tuple[Document, bool]:
     return doc, fetched
 
 
+def ingest_scan_symbol(conn, symbol: str) -> tuple[Document, bool]:
+    """Momentum-scan variant of ingest_symbol: same prices endpoint, cached
+    under source_name='tiingo_scan' so scan ETFs never enter price_bars, the
+    restatement guard, or any engine surface (invariant 5 isolation —
+    DECISIONS.md 2026-07-29 "Momentum scan")."""
+    token = os.environ["TIINGO_API_KEY"]
+    params = {"startDate": HISTORY_START, "format": "json", "token": token}
+    return fetch_and_cache(
+        conn,
+        url=f"https://api.tiingo.com/tiingo/daily/{symbol.lower()}/prices",
+        params=params,
+        stored_params={k: v for k, v in params.items() if k != "token"},
+        source_name="tiingo_scan",
+        license_note=LICENSE_NOTE,
+    )
+
+
+def latest_scan_bars(conn, symbol: str) -> list[Bar]:
+    """Bars from the most recently ingested tiingo_scan document."""
+    from data import repository as repo
+
+    docs = repo.fetch(
+        conn, Document,
+        "source_name = 'tiingo_scan' AND retrieval_url LIKE %s",
+        (f"%/daily/{symbol.lower()}/prices",),
+    )
+    if not docs:
+        return []
+    newest = max(docs, key=lambda d: d.ingestion_time)
+    return parse_bars(newest, symbol)
+
+
 def parse_bars(doc: Document, symbol: str) -> list[Bar]:
     """Derive-on-read from the cached JSON; malformed rows are skipped
 
