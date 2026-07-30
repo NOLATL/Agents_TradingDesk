@@ -114,3 +114,21 @@ def test_exhausted_retries_raise_and_log_failure(conn, experiment_id, run_cleanu
     row = conn.execute(
         "SELECT success FROM agent_runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row == (False,)
+
+
+def test_format_schema_strips_string_maxlength_only():
+    """llama.cpp's grammar compiler chokes on large string maxLength
+    ("failed to parse grammar", 2026-07-29 — SectionDraft's 25000-char
+    runaway guard). The `format` schema drops it; maxItems (list caps, used
+    by the funnel schemas) stays; Pydantic still validates the full schema."""
+    from pydantic import BaseModel, Field
+
+    class Guarded(BaseModel):
+        text: str = Field(max_length=25000)
+        items: list[str] = Field(default_factory=list, max_length=3)
+
+    stripped = llm.format_schema(Guarded)
+    assert "maxLength" not in stripped["properties"]["text"]
+    assert stripped["properties"]["items"]["maxItems"] == 3
+    # the model's own schema is untouched (never mutate a cached schema)
+    assert Guarded.model_json_schema()["properties"]["text"]["maxLength"] == 25000

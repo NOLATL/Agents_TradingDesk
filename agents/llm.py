@@ -12,6 +12,7 @@
   truncate; very long documents are chunked upstream (chunking.py).
 """
 
+import copy
 import hashlib
 import json
 import re
@@ -93,6 +94,29 @@ def _extract_json(content: str) -> str:
     return content[start:]
 
 
+def format_schema(schema: type[BaseModel]) -> dict:
+    """The JSON Schema sent as Ollama's `format` (constrained decoding).
+
+    String `maxLength` is stripped recursively: llama.cpp's grammar compiler
+    fails on the huge repetition range ("Failed to initialize samplers:
+    failed to parse grammar" — observed 2026-07-29 with SectionDraft's
+    25000-char runaway guard). Decoding guidance only — Pydantic still
+    validates the FULL schema, maxLength included, on parse."""
+    def strip(node):
+        if isinstance(node, dict):
+            if node.get("type") == "string":
+                node.pop("maxLength", None)
+            for v in node.values():
+                strip(v)
+        elif isinstance(node, list):
+            for v in node:
+                strip(v)
+
+    out = copy.deepcopy(schema.model_json_schema())  # never mutate a cached schema
+    strip(out)
+    return out
+
+
 def structured_call(
     conn,
     *,
@@ -142,7 +166,7 @@ def structured_call(
                 "model": tag,
                 "messages": messages,
                 "stream": False,
-                "format": schema.model_json_schema(),
+                "format": format_schema(schema),
                 "options": {
                     "temperature": temperature,
                     "num_ctx": LLM_CFG["num_ctx"],
