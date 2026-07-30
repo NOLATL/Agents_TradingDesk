@@ -269,3 +269,77 @@ def test_narrate_scan_rejects_foreign_ticker_and_gives_up(conn, monkeypatch):
         max_attempts=2)
     assert text is None
     assert "dropped after 2 attempts" in note and "NVDA" in note
+
+
+# --------------------------------------------------------------------------- #
+# Phase A (three-vendor architecture): internals render + quarantine guards
+# --------------------------------------------------------------------------- #
+
+def _internals_row(pocket="Semiconductors"):
+    from analytics.scan_internals import PocketInternals
+    return PocketInternals(
+        pocket=pocket, members_scored=8, members_total=9,
+        median_member_composite=D("0.42"), breadth_pos=6, breadth_known=8,
+        pct_above_avg=D("0.75"), new_highs=2, new_lows=1,
+        dispersion=D("0.031"))
+
+
+def test_render_internals_and_referee_sections():
+    text = render_scan(_data(
+        internals=(_internals_row(),), index_internals=_internals_row("S&P 500"),
+        internals_note="alpaca pages fetched 12, cache-hit 0",
+        referee_notes=("no Tiingo-vs-Alpaca divergence beyond tolerance",)))
+    assert "## Pocket internals" in text
+    assert "| S&P 500 | 8/9 | +0.42 | 6/8 | 75% | 2/1 | 3.1% |" in text
+    assert "| Semiconductors | 8/9" in text
+    assert "*alpaca pages fetched 12, cache-hit 0*" in text
+    assert "## Cross-vendor referee" in text
+    assert "no Tiingo-vs-Alpaca divergence" in text
+
+
+def test_render_without_internals_hides_sections():
+    text = render_scan(_data())
+    assert "## Pocket internals" not in text
+    assert "## Cross-vendor referee" not in text
+
+
+def test_narrator_inputs_carry_internals_values():
+    context, values, _ = narrator_inputs(_data(
+        internals=(_internals_row(),), index_internals=None))
+    assert "POCKET INTERNALS" in context
+    assert "Semiconductors: 8/9 scored" in context
+    assert any(abs(v - 75.0) < 1e-9 for v in values)   # pct_above_avg as %
+    assert any(abs(v - 3.1) < 1e-9 for v in values)    # dispersion as %
+
+
+def test_alpaca_documents_never_enter_price_bars(conn):
+    """Extends the source allowlist regression: the rebuild is blind to
+    every non-'tiingo' source_name (invariant-5 isolation)."""
+    from data.price_bars import rebuild_price_bars, table_fingerprint
+
+    with conn.transaction():
+        rebuild_price_bars(conn)
+        fp = table_fingerprint(conn)
+        repo.insert_document(conn, Document(
+            content_hash="alp-pb-guard", raw_bytes=b'{"bars": {}}',
+            retrieval_url="https://data.alpaca.markets/v2/stocks/bars",
+            source_name="alpaca_scan", ingestion_time=NOW,
+            first_eligible_decision_time=NOW))
+        rebuild_price_bars(conn)
+        assert table_fingerprint(conn) == fp
+        raise psycopg.Rollback
+
+
+def test_engine_roles_import_no_scan_vendors():
+    """Static blinding guard (EXP-001 freeze): the engine roles and scout
+    must not import the scan vendors or scan analytics."""
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    banned = ("adapters.alpaca", "adapters.schwab", "analytics.scan",
+              "adapters import alpaca", "adapters import schwab")
+    for rel in ("agents/roles/evidence.py", "agents/roles/analyst.py",
+                "agents/roles/reviewer.py", "research/candidate_scout.py"):
+        src = (root / rel).read_text()
+        for token in banned:
+            assert token not in src, f"{rel} references {token}"

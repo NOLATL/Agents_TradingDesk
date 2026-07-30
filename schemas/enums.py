@@ -143,6 +143,7 @@ class IncidentClass(StrEnum):
     UNSUPPORTED_CORPORATE_ACTION = "UNSUPPORTED_CORPORATE_ACTION"  # triggers quarantine (§6)
     STALE_DATA = "STALE_DATA"
     INCONSISTENT = "INCONSISTENT"
+    VENDOR_MISMATCH = "VENDOR_MISMATCH"  # cross-vendor referee (migration 010)
 
 
 class IncidentStatus(StrEnum):

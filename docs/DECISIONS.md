@@ -557,6 +557,47 @@ Four human decisions shaped it (2026-07-29):
   parse. Same class as the native-endpoint ruling — transport change, same
   models/prompts/prompt_version hashes, NOT an experiment condition.
 
+## 2026-07-30 — Three-vendor data architecture (human-directed; plan approved in full)
+
+Jared asked for a thorough Tiingo+Alpaca+Schwab plan covering daily activity
+and deep-dive research. Approved decisions: Alpaca key created by Jared;
+Schwab re-auth ritual Sunday evening (T-24h reminder Saturday); Friday
+Schwab pre-fetch for same-day deep-dive fundamentals; all four phases (A:
+Alpaca scan engine, B: Schwab auth+macro tape, C: fundamentals/valuation/
+deep-dive market context, D: options sentiment + Friday macro synthesis).
+Full plan retained in the session plan file; key rulings:
+
+- **Vendor roles.** Tiingo stays the core desk backbone untouched (mid-Gate-C
+  source swap = governance event; its raw+adjusted+splitFactor/divCash shape
+  feeds reconciliation). Alpaca (`alpaca_scan`, contracts/alpaca.yaml — DATA
+  ONLY, never order routing) is the scan price engine: ~503 S&P members +
+  pocket ETFs, multi-symbol bars, explicit adjustment param. Schwab (Phase B+)
+  is macro/sentiment/fundamentals enrichment. All new sources are report-only:
+  never price_bars, never assertions, never engine/analyst/scout context.
+- **EXP-001 freeze.** Engine-role inputs stay byte-identical; static import
+  guards test it. EXP-002 wishlist (not built): vol regime as reviewer input,
+  computed valuation in analyst context.
+- **Phase A shipped 2026-07-30:** `data/adapters/alpaca.py` (deterministic
+  chunking, scan_session-tagged pages, AlpacaDark degradation),
+  `analytics/scan_internals.py` (pocket internals: median member composite
+  z-scored across the full index, breadth, %>50-session avg, new hi/lo,
+  cross-sectional dispersion), cross-vendor referee in `data/reconcile.py`
+  (`compare_adjusted_closes`/`referee_universe`; Tiingo authoritative;
+  classified `VENDOR_MISMATCH` incidents, migration 010) wired into the scan
+  with full best-effort degradation (Alpaca dark → ETF-only scan).
+- **History-window ruling (deviation from the plan's 380d/252-session
+  sketch):** nightly full-window refetch at 380 days × 542 symbols ≈ 16MB/
+  night of immutable documents (~5GB/yr) — too heavy. Shipped
+  `alpaca.history_days: 130` (covers 63-session momentum + 50-session avg;
+  ~3MB/night), `adjustment=all` nightly + `raw` weekly (Friday session), and
+  63-session new-extremes for now; Phase B restores TRUE 52-week highs/lows
+  from Schwab's quote 52wkHi/Lo fields (direct extract, zero extra bars).
+- **Rollout:** shadow week with `scan.price_source: tiingo` (Alpaca ingests +
+  referee compares in parallel); after ≥5 clean sessions flip to `alpaca`
+  and stop tiingo_scan fetching (path kept as config fallback). Flip is a
+  DECISIONS.md entry. GICS note: XLK pocket carries `gics_sector:
+  Information Technology` (display name differs).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

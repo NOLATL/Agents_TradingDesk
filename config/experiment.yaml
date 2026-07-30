@@ -134,6 +134,30 @@ scan:
   constituents_max_age_days: 7              # weekly Wikipedia snapshot
   constituents_stale_alert_days: 21
   narrator_model: null                      # null → stage1_slice.llm.model_tag
+  # Three-vendor architecture Phase A (DECISIONS.md 2026-07-30):
+  price_source: tiingo                      # ETF pocket series source; → alpaca after shadow week
+  include_sp500_members: true               # single-name internals (needs alpaca.enabled)
+  internals:
+    avg_window_sessions: 50                 # %-above-moving-average window
+    extreme_window_sessions: 63             # new-high/low window (Phase B upgrades to
+                                            #   true 52wk via Schwab quote fields)
+    dispersion_horizon_index: 1             # dispersion measured on 21d returns
+  referee:
+    enabled: true
+    rel_tolerance_pct: "0.5"                # calibrate during shadow week
+    window_sessions: 21
+    min_overlap: 10
+
+# Alpaca Basic (data-only, never order routing — contracts/alpaca.yaml).
+# Scan price engine for single-name internals; quarantined like everything
+# scan-side. NOT under frozen:/engine:.
+alpaca:
+  enabled: false                            # flip when ALPACA_API_KEY_ID/SECRET land in .env
+  feed: sip
+  chunk_size: 100
+  history_days: 130                         # covers 63-session momentum + 50-session avg
+  max_requests_per_run: 40
+  raw_pass_session_weekday: 4               # Friday SESSION (Saturday 00:30 run) adds adjustment=raw
   # Pocket universe: each ETF IS a sector/industry/theme pocket. kind is
   # sector | industry | theme-etf ("theme-etf" avoids colliding with desk
   # theme vocabulary). gics_sub_industries (optional) drives the report's
@@ -144,7 +168,8 @@ scan:
     - {ticker: XLE,  name: Energy,                 kind: sector}
     - {ticker: XLF,  name: Financials,             kind: sector}
     - {ticker: XLI,  name: Industrials,            kind: sector}
-    - {ticker: XLK,  name: Technology,             kind: sector}
+    - {ticker: XLK,  name: Technology,             kind: sector,
+       gics_sector: Information Technology}        # GICS name differs from display name
     - {ticker: XLP,  name: Consumer Staples,       kind: sector}
     - {ticker: XLRE, name: Real Estate,            kind: sector}
     - {ticker: XLU,  name: Utilities,              kind: sector}

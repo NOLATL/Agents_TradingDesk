@@ -23,6 +23,7 @@ import httpx
 
 from analytics.engine import clock
 from analytics.scan import rank_by_composite, rank_deltas, scan_scores
+from analytics.scan_internals import index_breadth, member_composites, pocket_internals
 from config.loader import CONFIG
 from data import repository as repo
 from data.adapters import wikipedia
@@ -209,6 +210,147 @@ def _hot_pocket_members(conn, pockets: list[PocketRow]) -> tuple:
     return tuple(out)
 
 
+def _pocket_members(sectors: dict[str, tuple[str, str | None]]) -> dict[str, list[str]]:
+    """pocket name → sorted constituent tickers, from GICS: sector pockets
+    match by gics_sector (pocket names mirror GICS sector names); industry/
+    theme pockets match their configured gics_sub_industries."""
+    by_sector: dict[str, list[str]] = {}
+    by_sub: dict[str, list[str]] = {}
+    for ticker, (sector, sub) in sectors.items():
+        by_sector.setdefault(sector, []).append(ticker)
+        if sub:
+            by_sub.setdefault(sub, []).append(ticker)
+    out: dict[str, list[str]] = {}
+    for p in SCAN_CFG.get("pockets", []):
+        if p["kind"] == "sector":
+            members = by_sector.get(p.get("gics_sector", p["name"]), [])
+        else:
+            members = [t for s in p.get("gics_sub_industries", [])
+                       for t in by_sub.get(s, [])]
+        if members:
+            out[p["name"]] = sorted(set(members))
+    return out
+
+
+def _referee(conn, session: date) -> tuple[str, ...]:
+    """Tiingo-vs-Alpaca adjusted-close referee over the engine-critical
+    overlap (theme universe + benchmarks). Report notes + one classified
+    VENDOR_MISMATCH incident per newly-affected symbol; never mutates
+    price_bars. Any failure degrades to a note."""
+    from data.reconcile import raise_incident, referee_universe
+    from schemas.enums import IncidentClass
+
+    cfg = SCAN_CFG.get("referee", {})
+    if not cfg.get("enabled"):
+        return ()
+    try:
+        mismatches = referee_universe(
+            conn, session,
+            symbols=sorted(_nightly_symbols(conn)),
+            window_sessions=int(cfg.get("window_sessions", 21)),
+            rel_tolerance=Decimal(str(cfg.get("rel_tolerance_pct", "0.5"))) / 100,
+            min_overlap=int(cfg.get("min_overlap", 10)),
+        )
+        if not mismatches:
+            return ("no Tiingo-vs-Alpaca divergence beyond tolerance",)
+        notes = []
+        by_symbol: dict[str, list] = {}
+        for m in mismatches:
+            by_symbol.setdefault(m.symbol, []).append(m)
+        for symbol, rows in sorted(by_symbol.items()):
+            worst = max(rows, key=lambda m: m.rel_diff)
+            note = (f"{symbol}: {len(rows)} session(s) diverge >"
+                    f"{cfg.get('rel_tolerance_pct', '0.5')}% (worst"
+                    f" {float(worst.rel_diff) * 100:.2f}% on {worst.session}:"
+                    f" tiingo {worst.reference_close} vs alpaca {worst.candidate_close})")
+            notes.append(note)
+            already_open = conn.execute(
+                "SELECT 1 FROM data_incidents WHERE incident_class = 'VENDOR_MISMATCH'"
+                " AND symbol = %s AND status = 'OPEN' LIMIT 1", (symbol,),
+            ).fetchone()
+            if not already_open:
+                raise_incident(
+                    conn, incident_class=IncidentClass.VENDOR_MISMATCH,
+                    source_name="alpaca_scan", symbol=symbol, description=note)
+        conn.commit()
+        notify("Cross-vendor price mismatch",
+               "; ".join(notes)[:400], priority="default", tags="warning")
+        return tuple(notes)
+    except Exception as e:  # noqa: BLE001 — the referee must not cost the scan
+        conn.rollback()
+        return (f"referee unavailable: {type(e).__name__}: {str(e)[:150]}",)
+
+
+def _single_name_phase(conn, session: date, horizons):
+    """Alpaca ingest + pocket internals + referee. Fully best-effort: any
+    failure degrades to an internals_note; the ETF scan is never touched.
+    Returns (internals, index_internals, internals_note, referee_notes,
+    alpaca_closes) — alpaca_closes feeds the price_source flip."""
+    from data.adapters import alpaca
+
+    alpaca_cfg = CONFIG.get("alpaca", {})
+    if not alpaca_cfg.get("enabled") or not SCAN_CFG.get("include_sp500_members"):
+        return (), None, None, (), {}
+    try:
+        constituents = wikipedia.sector_map(conn)
+        if not constituents:
+            return (), None, "constituents snapshot empty — internals off", (), {}
+        etf_tickers = [p["ticker"] for p in SCAN_CFG.get("pockets", [])]
+        universe = sorted(set(constituents) | set(etf_tickers))
+        adjustments: tuple[str, ...] = ("all",)
+        if session.weekday() == int(alpaca_cfg.get("raw_pass_session_weekday", 4)):
+            adjustments = ("all", "raw")
+        fetched, hits, gaps = alpaca.ingest_scan_universe(
+            conn, universe, session=session,
+            history_days=int(alpaca_cfg.get("history_days", 130)),
+            chunk_size=int(alpaca_cfg.get("chunk_size", 100)),
+            max_requests=int(alpaca_cfg.get("max_requests_per_run", 40)),
+            adjustments=adjustments,
+            feed=alpaca_cfg.get("feed", "sip"),
+        )
+        closes, scan_session = alpaca.latest_scan_closes(conn, cutoff=session)
+        bars, _ = alpaca.latest_scan_bars(conn, adjustment="all")
+        fresh = {s: series for s, series in closes.items()
+                 if bars.get(s) and bars[s][-1].session >= session}
+        stale = len(closes) - len(fresh)
+        single_names = {s: v for s, v in fresh.items() if s in constituents}
+        if not single_names:
+            note = (f"Alpaca data covers no fresh single names for {session}"
+                    f" (ingest gaps: {len(gaps)})")
+            return (), None, note, (), {}
+        icfg = SCAN_CFG.get("internals", {})
+        kwargs = dict(
+            dispersion_horizon_index=int(icfg.get("dispersion_horizon_index", 1)),
+            avg_window=int(icfg.get("avg_window_sessions", 50)),
+            extreme_window=int(icfg.get("extreme_window_sessions", 63)),
+        )
+        scores = member_composites(single_names, horizons)
+        members = _pocket_members(wikipedia.sector_map(conn))
+        internals = [
+            pocket_internals(
+                name, {s: single_names[s] for s in syms if s in single_names},
+                scores, **kwargs)
+            for name, syms in members.items()
+        ]
+        internals = [i for i in internals if i.members_total]
+        internals.sort(key=lambda i: (i.median_member_composite is None,
+                                      -(i.median_member_composite or 0), i.pocket))
+        index_row = index_breadth(single_names, scores, **kwargs)
+        note_bits = [f"alpaca pages fetched {fetched}, cache-hit {hits}"]
+        if gaps:
+            note_bits.append(f"{len(gaps)} chunk-symbol gaps")
+        if stale:
+            note_bits.append(f"{stale} stale symbols excluded")
+        etf_bars = {s: bars[s] for s in etf_tickers if s in fresh}
+        return (tuple(internals), index_row, "; ".join(note_bits),
+                _referee(conn, session), etf_bars)
+    except alpaca.AlpacaDark as e:
+        return (), None, f"Alpaca dark: {e}", (), {}
+    except Exception as e:  # noqa: BLE001 — internals must not cost the scan
+        conn.rollback()
+        return (), None, f"internals failed: {type(e).__name__}: {str(e)[:150]}", (), {}
+
+
 def _narrate(conn, data: ScanReportData) -> tuple[str | None, str | None]:
     """Best-effort guarded narration; any failure is a note, never a halt."""
     if not data.pockets:
@@ -269,8 +411,10 @@ def main(as_of_override: str | None = None) -> None:
 
             phase = "ingest"
             nightly = _nightly_symbols(conn)
-            to_fetch = [p["ticker"] for p in pockets_cfg
-                        if p["ticker"] not in nightly]
+            use_alpaca_etfs = SCAN_CFG.get("price_source") == "alpaca"
+            to_fetch = ([] if use_alpaca_etfs else
+                        [p["ticker"] for p in pockets_cfg
+                         if p["ticker"] not in nightly])
             fetched, cache_hits, ingest_gaps = _ingest_etfs(conn, to_fetch)
             # An ingest failure only matters if the cached documents can't
             # cover the session — a 429'd symbol whose earlier fetch already
@@ -278,12 +422,26 @@ def main(as_of_override: str | None = None) -> None:
             # nothing). The compute pass below decides the real gaps.
             ingest_notes = dict(ingest_gaps)
 
+            phase = "singles"
+            internals, index_row, internals_note, referee_notes, alpaca_etf_bars = (
+                _single_name_phase(conn, session, horizons))
+
             phase = "compute"
             prior = prior_scan_session(session)
             closes: dict[str, list[Decimal]] = {}
             prior_closes: dict[str, list[Decimal]] = {}
             for p in pockets_cfg:
                 ticker = p["ticker"]
+                if use_alpaca_etfs:
+                    abars = alpaca_etf_bars.get(ticker)
+                    if not abars or abars[-1].session < session:
+                        gaps.append((ticker, "STALE (alpaca: no bar for session)"))
+                        continue
+                    closes[ticker] = [b.close for b in abars if b.session <= session]
+                    if prior:
+                        prior_closes[ticker] = [b.close for b in abars
+                                                if b.session <= prior]
+                    continue
                 bars = latest_scan_bars(conn, ticker)
                 if not bars or max(b.session for b in bars) < session:
                     gaps.append((ticker, ingest_notes.get(
@@ -330,6 +488,8 @@ def main(as_of_override: str | None = None) -> None:
                 fetched=fetched, cache_hits=cache_hits,
                 ingest_skipped=len(ingest_notes),
                 snapshot_refreshed=wikipedia.snapshot_refreshed_at(conn),
+                internals=internals, index_internals=index_row,
+                internals_note=internals_note, referee_notes=referee_notes,
             )
 
             phase = "narrate"

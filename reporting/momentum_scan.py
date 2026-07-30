@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from analytics.scan import PocketScore, breadth
+from analytics.scan_internals import PocketInternals
 from config.loader import SLICE
 
 QUARANTINE_BANNER = (
@@ -53,6 +54,11 @@ class ScanReportData:
     fetched: int = 0
     cache_hits: int = 0
     ingest_skipped: int = 0        # skipped/failed fetches served from cache
+    # Phase A (three-vendor architecture): single-name internals + referee
+    internals: tuple[PocketInternals, ...] = ()
+    index_internals: PocketInternals | None = None
+    internals_note: str | None = None      # e.g. "Alpaca dark — internals unavailable"
+    referee_notes: tuple[str, ...] = ()
     snapshot_refreshed: datetime | None = None
     narration: str | None = None
     narration_note: str | None = None
@@ -130,6 +136,27 @@ def narrator_inputs(data: ScanReportData) -> tuple[str, set[float], set[str]]:
             pos, known = breadth({r.symbol: r.score.returns[0] for r in rows})
             values.update({float(pos), float(known)})
             lines.append(f"breadth: {pos}/{known} positive {_hlabel(data.horizons[0])}")
+    rows = ([data.index_internals] if data.index_internals else []) + list(data.internals)
+    if rows:
+        lines += ["", "POCKET INTERNALS (single-name members, full-index z):"]
+        for it in rows:
+            for v in (it.median_member_composite, it.pct_above_avg, it.dispersion):
+                if v is not None:
+                    values.update({float(v), float(v) * 100})
+            values.update({float(it.members_scored), float(it.members_total),
+                           float(it.breadth_pos), float(it.breadth_known),
+                           float(it.new_highs), float(it.new_lows)})
+            pct = ("n/a" if it.pct_above_avg is None
+                   else f"{float(it.pct_above_avg) * 100:.0f}%")
+            disp = ("n/a" if it.dispersion is None
+                    else f"{float(it.dispersion) * 100:.1f}%")
+            lines.append(
+                f"- {it.pocket}: {it.members_scored}/{it.members_total} scored,"
+                f" median composite {_z(it.median_member_composite)},"
+                f" breadth {it.breadth_pos}/{it.breadth_known} positive"
+                f" {_hlabel(data.horizons[0])}, {pct} above 50-session average,"
+                f" {it.new_highs} new highs / {it.new_lows} new lows,"
+                f" dispersion {disp}")
     if data.gaps:
         lines += ["", "DATA GAPS (excluded): "
                   + ", ".join(f"{s} ({reason})" for s, reason in data.gaps)]
@@ -200,6 +227,36 @@ def render_scan(data: ScanReportData) -> str:
                     parts.append(f"{pos}/{known} positive {_hlabel(hz)}")
                 lines.append("")
                 lines.append(f"Breadth: {', '.join(parts)}.")
+
+    if data.internals or data.internals_note:
+        lines += ["", "## Pocket internals", "",
+                  "*Single-name members per pocket (Alpaca scan bars);"
+                  " member composites z-scored across the full S&P 500"
+                  " cross-section.*"]
+        if data.internals_note:
+            lines += ["", f"*{data.internals_note}*"]
+        if data.internals:
+            lines += ["",
+                      "| Pocket | Members | Median z | Breadth 5d | >50d avg"
+                      " | New hi/lo | Disp 21d |",
+                      "|---|---|---|---|---|---|---|"]
+            rows = list(data.internals)
+            if data.index_internals:
+                rows = [data.index_internals] + rows
+            for it in rows:
+                pct = ("—" if it.pct_above_avg is None
+                       else f"{float(it.pct_above_avg) * 100:.0f}%")
+                disp = ("—" if it.dispersion is None
+                        else f"{float(it.dispersion) * 100:.1f}%")
+                lines.append(
+                    f"| {it.pocket} | {it.members_scored}/{it.members_total}"
+                    f" | {_z(it.median_member_composite)}"
+                    f" | {it.breadth_pos}/{it.breadth_known} | {pct}"
+                    f" | {it.new_highs}/{it.new_lows} | {disp} |")
+
+    if data.referee_notes:
+        lines += ["", "## Cross-vendor referee", ""]
+        lines += [f"- {n}" for n in data.referee_notes]
 
     if data.hot_pocket_members:
         lines += ["", "## Inside the hot pockets", "",
