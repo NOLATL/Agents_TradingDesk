@@ -148,16 +148,6 @@ scan:
     window_sessions: 21
     min_overlap: 10
 
-# Alpaca Basic (data-only, never order routing — contracts/alpaca.yaml).
-# Scan price engine for single-name internals; quarantined like everything
-# scan-side. NOT under frozen:/engine:.
-alpaca:
-  enabled: false                            # flip when ALPACA_API_KEY_ID/SECRET land in .env
-  feed: sip
-  chunk_size: 100
-  history_days: 130                         # covers 63-session momentum + 50-session avg
-  max_requests_per_run: 40
-  raw_pass_session_weekday: 4               # Friday SESSION (Saturday 00:30 run) adds adjustment=raw
   # Pocket universe: each ETF IS a sector/industry/theme pocket. kind is
   # sector | industry | theme-etf ("theme-etf" avoids colliding with desk
   # theme vocabulary). gics_sub_industries (optional) drives the report's
@@ -222,3 +212,14 @@ alpaca:
                              "Agricultural & Farm Machinery"]}
     - {ticker: LIT,  name: Lithium & Battery,      kind: theme-etf}
     - {ticker: BOTZ, name: Robotics & AI,          kind: theme-etf}
+
+# Alpaca Basic (data-only, never order routing — contracts/alpaca.yaml).
+# Scan price engine for single-name internals; quarantined like everything
+# scan-side. NOT under frozen:/engine:.
+alpaca:
+  enabled: false                            # flip when ALPACA_API_KEY_ID/SECRET land in .env
+  feed: sip
+  chunk_size: 100
+  history_days: 130                         # covers 63-session momentum + 50-session avg
+  max_requests_per_run: 40
+  raw_pass_session_weekday: 4               # Friday SESSION (Saturday 00:30 run) adds adjustment=raw

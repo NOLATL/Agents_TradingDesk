@@ -343,3 +343,19 @@ def test_engine_roles_import_no_scan_vendors():
         src = (root / rel).read_text()
         for token in banned:
             assert token not in src, f"{rel} references {token}"
+
+
+def test_shipped_config_has_scan_pockets():
+    """Config-shape guard (2026-07-31 regression): inserting the top-level
+    alpaca: block above the pockets: list re-parented scan.pockets to
+    alpaca.pockets, so the nightly scan iterated zero pockets and died with
+    the misleading 'no final bar' halt. The shipped YAML must keep a
+    non-empty pocket universe under scan:."""
+    from config.loader import CONFIG
+
+    pockets = CONFIG.get("scan", {}).get("pockets", [])
+    assert len(pockets) >= 30, "scan.pockets missing or truncated in experiment.yaml"
+    for p in pockets:
+        assert {"ticker", "name", "kind"} <= p.keys()
+    assert "pockets" not in CONFIG.get("alpaca", {}), \
+        "pockets re-parented under alpaca: — YAML indentation regression"
