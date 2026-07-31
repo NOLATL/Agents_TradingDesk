@@ -597,6 +597,24 @@ Full plan retained in the session plan file; key rulings:
   and stop tiingo_scan fetching (path kept as config fallback). Flip is a
   DECISIONS.md entry. GICS note: XLK pocket carries `gics_sector:
   Information Technology` (display name differs).
+- **SUPERSEDED 2026-07-30 (same day, human decision): Alpaca is OUT.**
+  Alpaca requires full brokerage KYC (SSN/employment) even for a
+  never-funded paper account — Jared declined the personal-data price for
+  what is functionally a bulk price feed. Tiingo Power ($30/mo) was offered
+  and declined again; **Schwab becomes the single-name scan engine in
+  Phase B** (Jared's account — zero incremental disclosure): nightly
+  `/pricehistory` for ~503 names (~4.5 min at 120 req/min). Accepted
+  trade-offs, eyes open: split-adjusted-only bars (slight momentum
+  understatement on dividend payers — noted on the report), the whole
+  enriched scan shares the 7-day-token dependency (missed Sunday login →
+  internals + macro dark until re-auth, never a failed cycle), and a
+  community-documented data contract. Referee survives: Schwab closes vs
+  Tiingo engine truth over recent windows (where split-adjusted == raw, so
+  adjustment methodology stays out of the check). `alpaca.enabled` stays
+  false; the adapter/contract/tests are removed when Phase B lands the
+  Schwab fetch layer (one rework of the singles phase, not two). Escape
+  hatch unchanged: Tiingo Power remains an hour of rewiring if Schwab
+  proves flaky or the ritual grates.
 
 ## Deferred ideas (noted, not built)
 
