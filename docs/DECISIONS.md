@@ -616,6 +616,39 @@ Full plan retained in the session plan file; key rulings:
   hatch unchanged: Tiingo Power remains an hour of rewiring if Schwab
   proves flaky or the ritual grates.
 
+## 2026-07-31 — Human idea seeds for the nightly scout (human-directed)
+
+Jared wants to feed his own hypotheses (trigger: today's AI-bubble theme,
+drafted out-of-band via an expensive Anthropic deep-research pass he does
+not want repeated) into the desk's *standard* pipeline: local Qwen drafts,
+Sonnet reviews, the normal queue decides. `ops.approve theme propose`
+skips drafting/review entirely, so this is a new research-layer capability
+(tracked change, not a new experiment id — engine untouched).
+
+- **Mechanism:** `idea_seeds` queue (migration 011) + `ops.approve idea
+  add|list|drop`. The nightly scout consumes the oldest PENDING seed FIFO;
+  the seed **replaces the organic idea funnel** that night as the forced
+  winning-idea block (`_seed_idea_block`, labeled HUMAN-SEEDED with
+  explicit grounding instructions — cite [Hn]/[En] from the same context;
+  thin support → honest low conviction). Draft → precheck → Sonnet review
+  → `propose_theme` run unchanged; one proposal, one Sonnet call per night
+  preserved. Nightly-only by design (both human choices 2026-07-31); no
+  on-demand run path.
+- **Lifecycle:** CONSUMED on terminal outcome (PROPOSED or REJECTED —
+  written just before return/raise so intake's existing commit
+  choreography persists it); a crash (ERROR path) rolls the consumption
+  back, so the seed stays PENDING and retries the next night — the
+  rollback IS the retry mechanism. Accepted trade-off: a persistent
+  review-gate infrastructure failure surfaces as a rejection and consumes
+  the seed (loudly notified; recoverable with one `idea add`).
+- **Provenance:** queue/cancel write HUMAN assertions (invariant 1). The
+  resulting theme stays `source=AGENT` (invariant 13 — the agent authored
+  the proposal; the human supplied only the hypothesis), with
+  `source_ref=candidate_scout/human-seed:<id>` and `research_config`
+  carrying `seeded`/`seed_id`, which also keeps `_candidate_exists_today`'s
+  idempotency guard intact. `scout_attempts` grows a SEED stage; the
+  briefing's scout line and ntfy alerts label seeded nights.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

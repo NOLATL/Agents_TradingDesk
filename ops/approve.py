@@ -686,6 +686,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("slug")
     p.add_argument("--rationale", required=True)
 
+    idea = sub.add_parser(
+        "idea", help="queue a research idea for the nightly scout to develop"
+    ).add_subparsers(dest="idea_command", required=True)
+    p = idea.add_parser("add", help="queue an idea (FIFO; oldest consumed first)")
+    p.add_argument("text", help="the idea seed, quoted — a hypothesis sketch,"
+                   " not a full proposal")
+    idea.add_parser("list", help="pending seeds + recent outcomes")
+    p = idea.add_parser("drop", help="cancel a pending seed")
+    p.add_argument("seed_id", type=int)
+    p.add_argument("--rationale", required=True)
+
     thesis = sub.add_parser("thesis", help="deep-dive thesis decisions").add_subparsers(
         dest="thesis_command", required=True
     )
@@ -749,6 +760,31 @@ def main(argv: list[str] | None = None) -> None:
                     t = reject_theme(conn, args.slug, args.rationale)
                     print(f"REJECTED {t.slug} — thread closed; only a fresh "
                           f"proposal brings it back")
+            elif args.command == "idea":
+                from research import idea_seeds
+                if args.idea_command == "add":
+                    seed_id = idea_seeds.queue_seed(conn, args.text)
+                    print(
+                        f"SEED #{seed_id} queued — the next nightly scout"
+                        f" develops it (replaces that night's organic funnel)"
+                    )
+                elif args.idea_command == "list":
+                    rows = idea_seeds.list_seeds(conn)
+                    if not rows:
+                        print("no idea seeds")
+                    for sid, status, text, created, consumed_on, outcome, slug in rows:
+                        line = f"  #{sid} [{status}] ({created.date()}) {text[:110]}"
+                        if outcome:
+                            line += f" → {outcome} {consumed_on}"
+                            if slug:
+                                line += f" ({slug})"
+                        print(line)
+                elif args.idea_command == "drop":
+                    try:
+                        idea_seeds.cancel_seed(conn, args.seed_id, args.rationale)
+                    except ValueError as e:
+                        raise ThemeGateError(str(e)) from e
+                    print(f"CANCELLED seed #{args.seed_id}")
             elif args.command == "thesis":
                 if args.thesis_command == "accept":
                     orders = accept_thesis(conn, args.thesis_id, args.rationale)

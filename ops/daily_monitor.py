@@ -145,8 +145,10 @@ def intake(conn, session: date) -> None:
                 conviction=theme.research_config.get("conviction"))
         conn.commit()
         if theme is not None:
+            seeded = theme.research_config.get("seeded")
             notify(
-                f"New candidate theme: {theme.slug}",
+                (f"New candidate theme (from your seed): {theme.slug}"
+                 if seeded else f"New candidate theme: {theme.slug}"),
                 f"Scout proposed '{theme.title}'. "
                 f"Review: uv run python -m ops.approve theme list",
                 priority="default", tags="bulb",
@@ -160,9 +162,17 @@ def intake(conn, session: date) -> None:
                              e.proposal.slug, e.proposal.title, e.critique,
                              conviction=e.proposal.conviction)
         conn.commit()
+        seed_note = ""
+        if getattr(e, "seed_id", None) is not None:
+            seed_note = (
+                f"Your seed idea failed review — seed #{e.seed_id} consumed;"
+                f" re-queue with `ops.approve idea add` to retry. "
+            )
         notify(
-            "Scout proposal failed review — no candidate today",
-            str(e), priority="high", tags="warning",
+            ("Your seed idea failed review — no candidate today"
+             if seed_note else
+             "Scout proposal failed review — no candidate today"),
+            seed_note + str(e), priority="high", tags="warning",
         )
     except Exception as e:  # noqa: BLE001 — research must not cost the cycle
         # Ollama down, schema-invalid output after retries, EDGAR timeout…

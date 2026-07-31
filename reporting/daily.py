@@ -116,10 +116,23 @@ def _scout_outcome_lines(conn, session: date) -> list[str]:
     conviction_note = (
         f" Scout conviction: **{conviction.upper()}**." if conviction else ""
     )
+    # Human-seeded night (migration 011): a seed consumed on this session
+    # means the proposal was developed from the operator's queued idea.
+    # ERROR nights leave the seed PENDING (no consumed_on), so no label.
+    seed_row = conn.execute(
+        "SELECT id, seed_text FROM idea_seeds WHERE consumed_on = %s LIMIT 1",
+        (d,),
+    ).fetchone()
+    seed_note = ""
+    if seed_row is not None:
+        sid, seed_text = seed_row
+        excerpt = seed_text[:120] + ("…" if len(seed_text) > 120 else "")
+        seed_note = (f" (developed from your queued idea #{sid}:"
+                     f" “{excerpt}”)")
     if outcome == "PROPOSED":
         return ["", f"{when}: ran and proposed `{slug}` — **{title}**."
                     " Review approved it; it is in the queue below."
-                    + conviction_note, ""]
+                    + conviction_note + seed_note, ""]
     if outcome == "REJECTED":
         reason = (detail or "").strip()
         if len(reason) > 1000:
@@ -127,7 +140,7 @@ def _scout_outcome_lines(conn, session: date) -> list[str]:
         quoted = "\n".join(f"> {l}" for l in reason.splitlines()) or "> (no critique recorded)"
         return ["", f"{when}: ran and proposed `{slug}` — **{title}** —"
                     " but the review agent rejected it, so no candidate entered"
-                    " the queue. Reviewer's reason:", "", quoted, ""]
+                    f" the queue.{seed_note} Reviewer's reason:", "", quoted, ""]
     return ["", f"{when}: ran but failed before producing a candidate"
                 f" — {detail or 'no detail recorded'}.", ""]
 

@@ -38,7 +38,7 @@ from data.adapters import rss
 from data.adapters.core import fetch_and_cache
 from ops.approve import propose_theme, today_et
 from pydantic import BaseModel, ConfigDict, Field
-from research import idea_funnel, proposal_checks
+from research import idea_funnel, idea_seeds, proposal_checks
 from research.review_gate import generate_with_review
 from schemas.enums import AgentRole, ThemeSource
 from schemas.models import Experiment, Theme
@@ -333,10 +333,41 @@ def _clean_slug(slug: str) -> str:
     return re.sub(r"[^a-z0-9-]", "", slug.lower().replace(" ", "-"))[:60]
 
 
+def _seed_idea_block(text: str) -> str:
+    """The steering block for a human-queued seed (2026-07-31). Mirrors the
+    funnel's winning-idea block shape so the drafter treats it identically —
+    but the hypothesis came from the operator and carries no evidence
+    citations, so the grounding instruction is explicit."""
+    return (
+        "WINNING IDEA (HUMAN-SEEDED — the desk operator queued this"
+        " hypothesis; develop THIS idea into tonight's proposal; do not"
+        " switch to a different pattern):\n"
+        f"Idea: {text}\n"
+        "GROUNDING: the operator's seed carries no evidence citations."
+        " Search the recent headlines and EDGAR trends above for items"
+        " bearing on this idea and cite their [Hn]/[En] IDs in every"
+        " evidence point, per the grounding rules. If the context offers"
+        " little or no direct support, say so plainly and label the"
+        " proposal low conviction — an honest low-conviction development"
+        " of the operator's idea is the desired output; invented support"
+        " is not."
+    )
+
+
 def scout(conn, session: date | None = None) -> Theme | None:
     """The nightly pass. Returns the proposed CANDIDATE theme, or None only
     when today's proposal already exists (idempotent re-run). Every other
-    no-theme outcome raises — one theme per session is the contract."""
+    no-theme outcome raises — one theme per session is the contract.
+
+    Human idea seeds (2026-07-31): if the operator queued a seed via
+    `ops.approve idea add`, the oldest PENDING one replaces the organic
+    idea funnel as the forced winning idea; drafting, precheck, and review
+    run unchanged. The seed is CONSUMED only at a terminal outcome
+    (PROPOSED or REJECTED, written just before return/raise so intake's
+    commit choreography persists it); a crash rolls the write back and the
+    seed retries the next night. Trade-off, accepted: a persistent
+    review-gate infrastructure failure surfaces as a rejection and
+    consumes the seed — loudly notified, recoverable with one `idea add`."""
     if _candidate_exists_today(conn):
         return None
     session = session or today_et()
@@ -344,23 +375,38 @@ def scout(conn, session: date | None = None) -> Theme | None:
     ctx = build_context(conn)
     model_tag = SLICE["llm"].get("scout_model_tag", SLICE["llm"]["model_tag"])
 
+    # Human seed (2026-07-31): the oldest PENDING seed replaces the organic
+    # funnel outright. Pure SELECT here — build_context commits mid-scout,
+    # so any earlier idea_seeds write would survive an ERROR rollback and
+    # burn the seed on a crashed night.
+    seed = idea_seeds.oldest_pending(conn)
+    seed_id: int | None = None
+
     # Idea funnel (2026-07-29, Jared's design): 3 ideas → generous local
     # gate → deep evidence for the winner. Pure enrichment — any failure
     # falls back to the single-pass pipeline; the mandatory proposal never
     # depends on it.
     funnel = None
-    try:
-        funnel = idea_funnel.run_idea_funnel(
-            conn, experiment_id=exp.id, ctx=ctx, model_tag=model_tag,
-            session=session)
-    except Exception as e:  # noqa: BLE001 — enrichment, never load-bearing
+    if seed is None:
+        try:
+            funnel = idea_funnel.run_idea_funnel(
+                conn, experiment_id=exp.id, ctx=ctx, model_tag=model_tag,
+                session=session)
+        except Exception as e:  # noqa: BLE001 — enrichment, never load-bearing
+            proposal_checks.record_attempt(
+                conn, session, "IDEA_GATE", False,
+                f"funnel crashed, falling back to single-pass:"
+                f" {type(e).__name__}: {str(e)[:600]}",
+                len(ctx.text), model_tag)
+    else:
+        seed_id, seed_text = seed
         proposal_checks.record_attempt(
-            conn, session, "IDEA_GATE", False,
-            f"funnel crashed, falling back to single-pass:"
-            f" {type(e).__name__}: {str(e)[:600]}",
-            len(ctx.text), model_tag)
+            conn, session, "SEED", True,
+            f"seed #{seed_id}: {seed_text[:600]}", len(ctx.text), model_tag)
     gen_context = ctx.text
-    if funnel is not None:
+    if seed is not None:
+        gen_context = ctx.text + "\n\n" + _seed_idea_block(seed[1])
+    elif funnel is not None:
         gen_context = (ctx.text + "\n\n" + funnel.idea_block
                        + "\n\n" + funnel.evidence_block)
 
@@ -440,8 +486,14 @@ def scout(conn, session: date | None = None) -> Theme | None:
     if proposal is None:
         raise ScoutError("scout produced no proposal artifact")
     if not approved:
-        # Surfaced by the caller (intake phase notifies); never enters the queue.
-        raise ReviewRejected(proposal, critique)
+        # Surfaced by the caller (intake phase notifies); never enters the
+        # queue. A rejection is a terminal outcome for a seed: the UPDATE
+        # below is uncommitted at raise time, and intake's ReviewRejected
+        # handler commits first — persisting it alongside the instrument rows.
+        if seed_id is not None:
+            idea_seeds.mark_consumed(conn, seed_id, session, "REJECTED",
+                                     detail=(critique or "")[:1500])
+        raise ReviewRejected(proposal, critique, seed_id=seed_id)
 
     slug = _clean_slug(proposal.slug)
     if not slug:
@@ -452,6 +504,10 @@ def scout(conn, session: date | None = None) -> Theme | None:
         raise ScoutError(
             f"scout re-proposed existing slug {slug!r} despite coverage list"
         )
+    if seed_id is not None:
+        # Rides the same transaction as propose_theme; intake commits both.
+        idea_seeds.mark_consumed(conn, seed_id, session, "PROPOSED",
+                                 theme_slug=slug)
     return propose_theme(
         conn, slug, proposal.title[:200],
         [s.strip().upper() for s in proposal.symbols][:8],
@@ -462,15 +518,22 @@ def scout(conn, session: date | None = None) -> Theme | None:
             + f"\n\nScout conviction: {proposal.conviction.upper()}"
         ),
         source=ThemeSource.AGENT,
-        source_ref="candidate_scout/unified",
-        research_config_extra={"conviction": proposal.conviction},
+        source_ref=(f"candidate_scout/human-seed:{seed_id}"
+                    if seed_id is not None else "candidate_scout/unified"),
+        research_config_extra={
+            "conviction": proposal.conviction,
+            **({"seeded": True, "seed_id": seed_id}
+               if seed_id is not None else {}),
+        },
         commit=False,
     )
 
 
 class ReviewRejected(Exception):
-    def __init__(self, proposal: CandidateProposal, critique: str):
+    def __init__(self, proposal: CandidateProposal, critique: str,
+                 seed_id: int | None = None):
         self.proposal, self.critique = proposal, critique
+        self.seed_id = seed_id  # set when the rejected proposal was human-seeded
         super().__init__(
             f"scout proposal '{proposal.slug}' rejected by review: {critique[:300]}"
         )
