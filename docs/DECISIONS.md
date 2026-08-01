@@ -649,6 +649,47 @@ skips drafting/review entirely, so this is a new research-layer capability
   idempotency guard intact. `scout_attempts` grows a SEED stage; the
   briefing's scout line and ntfy alerts label seeded nights.
 
+## 2026-08-01 — External research packets (theme amend) (human-directed)
+
+Jared will recurringly develop a theme's thesis outside the desk with
+multiple frontier LLMs (a "research packet" — e.g. a redo of a
+reviewer-rejected deep dive) and wants that work injected as the theme's
+go-forward frame. First instance: the AI-capex-bubble packet
+(`docs/themes/theme-ai-capex-bubble.md`), which reframed thesis #1478's
+rejected energy/supply-chain chain as a revenue-timing-vs-debt-service gap.
+
+- **The injection channel is `ops.approve theme amend` and nothing else.**
+  HUMAN-provenance amendment of an open theme's research layer: description,
+  per-theme `emphasis_terms` / `fred_series` (each replaces the per-theme
+  list), and add-only symbols (next-session activation, same rule as accept
+  — point-in-time membership never restates). Guardrails: CLOSED themes and
+  themes with an ACTIVE thesis are not amendable. Every amend logs a HUMAN
+  assertion with before-values and rationale.
+- **The packet itself NEVER enters the evidence stream.** EXP-001 freeze:
+  the four LLM roles read only desk-fetched documents (EDGAR/RSS/Tiingo/
+  FRED). The desk must re-derive the thesis from primary evidence; the
+  packet steers *which* evidence gets collected (config) and arms the human
+  at `thesis accept` (comparison frame). Amending research config of a theme
+  with no surviving thesis is research-layer change (scout-model-swap
+  precedent), not a new experiment id.
+- **Packet home:** `docs/themes/theme-<slug>.md` with a provenance header
+  (what it is, when injected, what changed, the human-only monitoring
+  checklist for indicators the desk has no data source for).
+- **Why the W31 dive was mis-instrumented:** the human-proposed theme's
+  `research_config` held only symbols, so the dive fell back to grid-era
+  slice defaults — industrial FRED series (IPUTIL/CAPUTLG2211S/INDPRO) and
+  grid/electrical emphasis terms. That's why the macro backdrop discussed
+  factory utilization and AVGO's emphasis-driven exposure scored 0.17.
+  Amend fixed both: credit-spread series (BAMLH0A0HYM2 / BAMLC0A4CBBB /
+  BAMLH0A3HYC, all verified live) + financing-vocabulary emphasis terms;
+  OWL added as the off-balance-sheet-channel instrument. ARCC/OBDC stay
+  (near-zero scores are informative; OBDC doubles as a private-credit
+  stress gauge).
+- **Term-list gotcha for future amends:** `emphasis_count` is substring
+  matching — never use a bare term that embeds in a longer common word
+  (`lease` matches "release"); prefer phrases (`operating lease`,
+  `lease commitment`).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
