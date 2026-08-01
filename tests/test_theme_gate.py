@@ -320,3 +320,83 @@ def test_rejecting_the_unwind_cancels_the_death(conn):
             (thesis.id,),
         ).fetchone()[0] == 0  # sibling unwinds cancelled
         raise psycopg.Rollback
+
+
+# --------------------------------------------------------------------------- #
+# Theme amend (HUMAN research-layer edits — external research packets)
+# --------------------------------------------------------------------------- #
+
+def test_amend_updates_config_and_activates_added_symbols(conn):
+    with conn.transaction():
+        theme = propose(conn, "tg-amend", symbols=("AAA",))
+        approve.accept_theme(conn, "tg-amend", commit=False)
+        amended, changed = approve.amend_theme(
+            conn, "tg-amend", "reframed per external packet",
+            description="timing-gap framing",
+            add_symbols=["bbb", "AAA", "BBB"],  # dupes + already-known collapse
+            emphasis_terms=["free cash flow", "lease"],
+            fred_series=["BAMLH0A0HYM2"],
+            commit=False,
+        )
+        assert amended.description == "timing-gap framing"
+        assert amended.research_config["symbols"] == ["AAA", "BBB"]
+        assert amended.research_config["emphasis_terms"] == ["free cash flow", "lease"]
+        assert amended.research_config["fred_series"] == ["BAMLH0A0HYM2"]
+        assert set(changed) == {
+            "description", "emphasis_terms", "fred_series", "symbols +BBB"}
+
+        activation = conn.execute(
+            "SELECT activation_session FROM theme_symbols"
+            " WHERE theme_id = %s AND symbol = 'BBB'", (theme.id,)
+        ).fetchone()[0]
+        assert activation >= approve.today_et()  # never a restated past session
+
+        rationale, value = conn.execute(
+            "SELECT human_rationale, value FROM assertions"
+            " WHERE type = 'HUMAN' AND value->>'kind' = 'theme_amend'"
+            " AND (value->>'theme_id')::bigint = %s", (theme.id,)
+        ).fetchone()
+        assert rationale == "reframed per external packet"
+        assert value["emphasis_terms_before"] is None
+        raise psycopg.Rollback
+
+
+def test_amend_candidate_symbols_activate_at_accept(conn):
+    with conn.transaction():
+        theme = propose(conn, "tg-amend-cand", symbols=("AAA",))
+        approve.amend_theme(
+            conn, "tg-amend-cand", "add before accept",
+            add_symbols=["CCC"], commit=False,
+        )
+        assert conn.execute(
+            "SELECT count(*) FROM theme_symbols WHERE theme_id = %s", (theme.id,)
+        ).fetchone()[0] == 0  # not accepted yet — nothing activates
+        approve.accept_theme(conn, "tg-amend-cand", commit=False)
+        assert conn.execute(
+            "SELECT count(*) FROM theme_symbols WHERE theme_id = %s", (theme.id,)
+        ).fetchone()[0] == 2
+        raise psycopg.Rollback
+
+
+def test_amend_guardrails(conn):
+    with conn.transaction():
+        propose(conn, "tg-amend-closed")
+        approve.reject_theme(conn, "tg-amend-closed", "no", commit=False)
+        with pytest.raises(approve.ThemeGateError, match="CLOSED"):
+            approve.amend_theme(conn, "tg-amend-closed", "r",
+                                description="x", commit=False)
+
+        theme = propose(conn, "tg-amend-live")
+        approve.accept_theme(conn, "tg-amend-live", commit=False)
+        make_thesis(conn, theme, status=ThesisStatus.ACTIVE)
+        with pytest.raises(approve.ThemeGateError, match="ACTIVE thesis"):
+            approve.amend_theme(conn, "tg-amend-live", "r",
+                                description="x", commit=False)
+
+        theme2 = propose(conn, "tg-amend-noop")
+        with pytest.raises(approve.ThemeGateError, match="nothing to amend"):
+            approve.amend_theme(conn, "tg-amend-noop", "r", commit=False)
+        with pytest.raises(approve.ThemeGateError, match="nothing to amend"):
+            approve.amend_theme(conn, "tg-amend-noop", "r",
+                                description=theme2.description, commit=False)
+        raise psycopg.Rollback

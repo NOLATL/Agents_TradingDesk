@@ -10,7 +10,10 @@ lands here (consolidation spec, DECISIONS.md 2026-07-22):
   HARD CAP: one accepted theme per calendar day (ET), across all sources —
   checked here, enforced by the DB's partial unique index. Reject CLOSES the
   thread (terminal); an UNDECIDED candidate defers at end of day and
-  resurfaces Monday — only an explicit reject kills a theme.
+  resurfaces Monday — only an explicit reject kills a theme. `amend` applies
+  HUMAN research-layer edits (description, per-theme emphasis_terms /
+  fred_series, add-only symbols) to an open theme — the channel for external
+  research packets (DECISIONS.md "External research packets").
 - theses:  accept (REVIEWED → ACTIVE + sized proposals) or reject (thread
   fully closed) a Friday deep-dive thesis.
 - dead:    the ONLY path that retires a thesis by human judgment. Proposes
@@ -23,6 +26,9 @@ lands here (consolidation spec, DECISIONS.md 2026-07-22):
     uv run python -m ops.approve theme propose <slug> --title ... --symbols A,B
     uv run python -m ops.approve theme accept <slug> [--rationale ...]
     uv run python -m ops.approve theme reject <slug> --rationale ...
+    uv run python -m ops.approve theme amend <slug> [--description-file f]
+        [--add-symbols A,B] [--emphasis-terms ...] [--fred-series ...]
+        --rationale ...
     uv run python -m ops.approve thesis accept <id> [--rationale ...]
     uv run python -m ops.approve thesis reject <id> --rationale ...
     uv run python -m ops.approve dead <thesis_id> --rationale ...
@@ -33,6 +39,8 @@ import sys
 import textwrap
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+from psycopg.types.json import Json
 
 from analytics.engine import clock
 from analytics.engine.metrics import forecast_resolution_effect
@@ -342,6 +350,101 @@ def reject_theme(conn, slug: str, rationale: str, commit: bool = True) -> Theme:
     if commit:
         conn.commit()
     return repo.fetch_one(conn, Theme, "id = %s", (theme.id,))
+
+
+def amend_theme(
+    conn, slug: str, rationale: str,
+    description: str | None = None,
+    add_symbols: list[str] | None = None,
+    emphasis_terms: list[str] | None = None,
+    fred_series: list[str] | None = None,
+    commit: bool = True,
+) -> tuple[Theme, list[str]]:
+    """HUMAN amendment of an open theme's research layer (DECISIONS.md
+    "External research packets"). Amendable fields: description, per-theme
+    emphasis_terms / fred_series (each REPLACES the per-theme list; an empty
+    theme falls back to the config slice defaults), and add-only symbols.
+
+    Guardrails:
+    - a CLOSED theme is not amendable — propose a fresh theme instead;
+    - a theme with an ACTIVE thesis is not amendable — the monitoring context
+      is part of what the human accepted; retire via `dead` first;
+    - symbols are add-only, activating next session (point-in-time membership
+      never restates history — removal is not a concept the ledger supports).
+
+    Returns (refreshed theme, list of changed-field labels).
+    """
+    theme = _theme(conn, slug)
+    if theme.status is ThemeStatus.CLOSED:
+        raise ThemeGateError(f"theme {slug} is CLOSED — propose a fresh theme")
+    active = conn.execute(
+        "SELECT id FROM theses WHERE theme_id = %s AND status = 'ACTIVE'",
+        (theme.id,),
+    ).fetchone()
+    if active is not None:
+        raise ThemeGateError(
+            f"theme {slug} has ACTIVE thesis #{active[0]} — amend would change"
+            f" a live monitoring context; retire it via `dead` first"
+        )
+
+    now = datetime.now(timezone.utc)
+    config = dict(theme.research_config)
+    changed: list[str] = []
+    audit: dict = {"kind": "theme_amend", "theme_id": theme.id, "slug": slug}
+
+    if description is not None and description != theme.description:
+        audit["description_before"] = theme.description
+        changed.append("description")
+    else:
+        description = theme.description
+    if emphasis_terms is not None:
+        audit["emphasis_terms_before"] = config.get("emphasis_terms")
+        config["emphasis_terms"] = emphasis_terms
+        changed.append("emphasis_terms")
+    if fred_series is not None:
+        audit["fred_series_before"] = config.get("fred_series")
+        config["fred_series"] = fred_series
+        changed.append("fred_series")
+
+    added = []
+    if add_symbols:
+        known = set(config.get("symbols", []))
+        added = [s.strip().upper() for s in add_symbols if s.strip()]
+        added = [s for s in dict.fromkeys(added) if s not in known]
+    if added:
+        config["symbols"] = config.get("symbols", []) + added
+        changed.append(f"symbols +{','.join(added)}")
+        if theme.status is ThemeStatus.ACCEPTED:
+            # same activation rule as accept_theme: bars exist before the
+            # first gate that needs them; pre-activation history never restates
+            activation = clock.first_session_open_after(now)
+            for symbol in added:
+                conn.execute(
+                    "INSERT INTO theme_symbols (theme_id, symbol,"
+                    " activation_session, created_at) VALUES (%s, %s, %s, %s)"
+                    " ON CONFLICT (theme_id, symbol) DO NOTHING",
+                    (theme.id, symbol, activation, now),
+                )
+        # on CANDIDATE/DEFERRED themes accept_theme activates them later
+
+    if not changed:
+        raise ThemeGateError("nothing to amend — no field differs")
+
+    conn.execute(
+        "UPDATE themes SET description = %s, research_config = %s WHERE id = %s",
+        (description, Json(config), theme.id),
+    )
+    audit["changed"] = changed
+    repo.insert_assertion(
+        conn,
+        Assertion(
+            type=ProvenanceType.HUMAN, value=audit,
+            human_rationale=rationale, created_at=now,
+        ),
+    )
+    if commit:
+        conn.commit()
+    return repo.fetch_one(conn, Theme, "id = %s", (theme.id,)), changed
 
 
 def roll_theme_queue(conn, session: date, commit: bool = True) -> tuple[int, int]:
@@ -685,6 +788,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p = theme.add_parser("reject", help="close the thread (terminal; undecided themes defer on their own)")
     p.add_argument("slug")
     p.add_argument("--rationale", required=True)
+    p = theme.add_parser(
+        "amend",
+        help="HUMAN amendment of an open theme's research layer"
+             " (description / per-theme config / add-only symbols)",
+    )
+    p.add_argument("slug")
+    p.add_argument("--description", default=None)
+    p.add_argument("--description-file", default=None,
+                   help="read the new description from a file (wins over --description)")
+    p.add_argument("--add-symbols", default=None,
+                   help="comma-separated tickers to ADD (removal unsupported —"
+                        " point-in-time membership)")
+    p.add_argument("--emphasis-terms", default=None,
+                   help="comma-separated; REPLACES the per-theme emphasis term list")
+    p.add_argument("--fred-series", default=None,
+                   help="comma-separated FRED series ids; REPLACES the per-theme list")
+    p.add_argument("--rationale", required=True)
 
     idea = sub.add_parser(
         "idea", help="queue a research idea for the nightly scout to develop"
@@ -760,6 +880,25 @@ def main(argv: list[str] | None = None) -> None:
                     t = reject_theme(conn, args.slug, args.rationale)
                     print(f"REJECTED {t.slug} — thread closed; only a fresh "
                           f"proposal brings it back")
+                elif args.theme_command == "amend":
+                    description = args.description
+                    if args.description_file:
+                        from pathlib import Path
+
+                        description = Path(args.description_file).read_text()
+                    split = lambda raw: (  # noqa: E731
+                        [s.strip() for s in raw.split(",") if s.strip()]
+                        if raw is not None else None
+                    )
+                    t, changed = amend_theme(
+                        conn, args.slug, args.rationale,
+                        description=description,
+                        add_symbols=split(args.add_symbols),
+                        emphasis_terms=split(args.emphasis_terms),
+                        fred_series=split(args.fred_series),
+                    )
+                    print(f"AMENDED {t.slug}: {'; '.join(changed)}"
+                          f" (HUMAN assertion logged)")
             elif args.command == "idea":
                 from research import idea_seeds
                 if args.idea_command == "add":
