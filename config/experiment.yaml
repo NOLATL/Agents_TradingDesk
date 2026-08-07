@@ -219,7 +219,7 @@ scan:
 # fundamentals/chains land in Phase C/D. Quarantined like everything
 # scan-side. NOT under frozen:/engine:.
 schwab:
-  enabled: false                            # flip after first ops.schwab_auth login
+  enabled: true                             # first login 2026-08-07; Sunday-evening ritual
   reauth_alert_hours: 24                    # Saturday reminder for the Sunday-evening ritual
   throttle_rps: 2                           # 120 req/min cap, with headroom
   history_days: 130                         # singles window: 63-session momentum + 50-session avg

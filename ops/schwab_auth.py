@@ -13,6 +13,8 @@ import sys
 import urllib.parse
 from datetime import datetime, timezone
 
+import httpx
+
 from config.loader import CONFIG
 from data.adapters import schwab_auth
 from data.adapters.schwab_auth import SchwabDark
@@ -30,11 +32,30 @@ def login() -> None:
     print("   address bar and paste it here.\n")
     pasted = input("Paste redirect URL: ").strip()
     query = urllib.parse.urlparse(pasted).query
+    # parse_qs already URL-decodes (%40 → @); never decode twice
     code = urllib.parse.parse_qs(query).get("code", [None])[0]
     if not code:
         print("no ?code= parameter found in that URL — copy the entire URL", file=sys.stderr)
         sys.exit(1)
-    schwab_auth.exchange_code(urllib.parse.unquote(code))
+    try:
+        schwab_auth.exchange_code(code)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:300]
+        print(f"\ntoken exchange REJECTED (HTTP {e.response.status_code}): {body}",
+              file=sys.stderr)
+        if e.response.status_code == 401:
+            print("→ likely: the app is still 'Approved - Pending' on"
+                  " developer.schwab.com — wait for 'Ready For Use'.",
+                  file=sys.stderr)
+        elif "redirect" in body.lower():
+            print("→ likely: the app's callback URL does not EXACTLY match"
+                  f" {schwab_auth.redirect_uri()} — check the app settings.",
+                  file=sys.stderr)
+        elif e.response.status_code == 400:
+            print("→ likely: the code expired or was already used (they are"
+                  " single-use, ~10 min) — run login again for a fresh one.",
+                  file=sys.stderr)
+        sys.exit(1)
     status = schwab_auth.token_status()
     print(f"\nlogged in — refresh token valid until {status.refresh_expires_at:%a %Y-%m-%d %H:%M %Z}"
           f" ({status.hours_left:.0f}h). Next ritual: Sunday evening.")
