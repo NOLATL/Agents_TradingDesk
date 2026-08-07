@@ -860,6 +860,41 @@ human-confirmed 2026-08-07.
   terms` CLI). ClinicalTrials/Form 4/GDELT deferred. `futures_watch` stays
   UNWIRED from the scout — price-structure signal, barred by invariant 5.
 
+## 2026-08-07 — Scale-up review plan: revisit ~2026-08-21 (human-directed)
+
+Jared's rulings after the scale-up shipped: **no additional evidence
+sources** (ClinicalTrials/Form 4/GDELT stay deferred — "diseconomies of
+scale"; the bottleneck is selection quality, not evidence supply), invariant
+5 reaffirmed, and the pre-scale-up queue was cleared (all 5 outstanding
+AGENT proposals terminally rejected 2026-08-07 so fresh candidates come
+from the new pipeline only — note they occupy the 14-day recently-rejected
+block until ~08-21).
+
+**Two-week readout (~2026-08-21), in one sitting:**
+1. **Turns-to-medium + fallback rate** (briefing instrument line; per-turn
+   detail in `scout_attempts.review_conviction`). High turns + high fallback
+   with the SAME theme resubmitted across turns = tune the seek-stronger
+   feedback prompt, not the budget.
+2. **Conviction calibration**: reviewer conviction vs Jared's accept rate
+   (~10 proposals in). If low-conviction fallbacks get accepted as often as
+   mediums, the conviction bar is theater — simplify back.
+3. **Citation-mix readout** (build then if wanted): which evidence classes
+   ([Hn]/[En]/[Kn]/[Un]/[Fn]/[Sn]) appear in accepted vs rejected themes'
+   evidence_points — data already stored. Sections that never earn a cite
+   in an accepted theme get PRUNED (the anti-scale lever).
+4. **Intraday sketch quality**: near-duplicate sketches across the 4 daily
+   batches (title-slug dedup is best-effort). Crowded/repetitive staged
+   block → drop to 2 batches/day.
+5. **Friday congestion**: daily monitor + weekly deep dives + a possible
+   6-turn scout share the GPU 22:45-00:30; stagger before optimizing.
+
+**Next-build candidate (Jared's favorite, build first if the readout is
+healthy): human decision-history feedback loop** — a scout context block
+carrying Jared's own ops.approve accept/reject decisions with rationales
+(the desk's densest signal; currently only SONNET's rejections feed back).
+Zero new data, zero API cost, compounds with every decision. Second:
+the citation-mix readout above.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
