@@ -140,3 +140,79 @@ def test_market_context_disabled_renders_nothing(monkeypatch):
         __import__("config.loader", fromlist=["CONFIG"]).CONFIG,
         "schwab", {"enabled": False})
     assert _market_context_lines(object(), _bundle(["ETN"])) == []
+
+
+# --------------------------------------------------------------------------- #
+# Options sentiment (Phase D) — chain math on fixture chains
+# --------------------------------------------------------------------------- #
+
+def _contract(pc, strike, dte, iv, oi=100, vol=50):
+    from data.adapters.schwab import OptionContract
+    return OptionContract(put_call=pc, strike=D(str(strike)), dte=dte,
+                          iv=None if iv is None else D(str(iv)),
+                          open_interest=oi, volume=vol)
+
+
+def _chain(spot="100", contracts=()):
+    from data.adapters.schwab import ChainSnap
+    return ChainSnap(symbol="SPY", spot=D(spot), contracts=tuple(contracts))
+
+
+def test_put_call_ratio_by_volume_and_oi():
+    from analytics.market_context import put_call_ratio
+    contracts = [_contract("PUT", 95, 14, 20, oi=300, vol=150),
+                 _contract("CALL", 105, 14, 18, oi=200, vol=100)]
+    assert put_call_ratio(contracts, field="volume") == D("1.5")
+    assert put_call_ratio(contracts, field="open_interest") == D("1.5")
+    assert put_call_ratio([_contract("PUT", 95, 14, 20)], field="volume") is None
+
+
+def test_atm_iv_nearest_strike_front_expiry():
+    from analytics.market_context import atm_iv
+    chain = _chain(contracts=[
+        _contract("PUT", 99, 14, 22), _contract("CALL", 99, 14, 20),
+        _contract("PUT", 110, 14, 30),            # far strike ignored
+        _contract("PUT", 100, 45, 19),            # later expiry ignored at index 0
+    ])
+    assert atm_iv(chain) == D("21")               # mean(22, 20) at strike 99
+    assert atm_iv(chain, expiry_index=1) == D("19")
+    assert atm_iv(_chain(contracts=[])) is None
+
+
+def test_iv_term_slope_far_minus_near():
+    from analytics.market_context import iv_term_slope
+    chain = _chain(contracts=[
+        _contract("PUT", 100, 14, 20), _contract("CALL", 100, 14, 20),
+        _contract("PUT", 100, 45, 24), _contract("CALL", 100, 45, 24),
+    ])
+    assert iv_term_slope(chain, near_dte=14, far_dte=45) == D("4")
+    single = _chain(contracts=[_contract("PUT", 100, 14, 20)])
+    assert iv_term_slope(single, near_dte=14, far_dte=45) is None
+
+
+def test_parse_chain_filters_bogus_iv():
+    import json
+    from data.adapters.schwab import parse_chain
+    from schemas.models import Document
+    from datetime import datetime, timezone
+    payload = {
+        "symbol": "SPY", "underlyingPrice": 500.5,
+        "putExpDateMap": {"2026-08-21:14": {"495.0": [
+            {"strikePrice": 495.0, "daysToExpiration": 14, "volatility": 18.2,
+             "openInterest": 1000, "totalVolume": 500},
+            {"strikePrice": 495.0, "daysToExpiration": 14, "volatility": -999.0,
+             "openInterest": 1, "totalVolume": 1},
+        ]}},
+        "callExpDateMap": {"2026-08-21:14": {"505.0": [
+            {"strikePrice": 505.0, "daysToExpiration": 14, "volatility": 17.1,
+             "openInterest": 900, "totalVolume": 700}]}},
+    }
+    now = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    chain = parse_chain(Document(
+        content_hash="chain-test", raw_bytes=json.dumps(payload).encode(),
+        retrieval_url="u", source_name="schwab_chains",
+        ingestion_time=now, first_eligible_decision_time=now))
+    assert chain.spot == D("500.5")
+    assert len(chain.contracts) == 3
+    ivs = [c.iv for c in chain.contracts if c.put_call == "PUT"]
+    assert D("18.2") in ivs and None in ivs       # -999 → None, kept for OI/vol

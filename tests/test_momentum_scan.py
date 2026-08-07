@@ -401,3 +401,23 @@ def test_narrator_inputs_carry_macro_values_and_symbols():
     assert any(abs(v - 17.5) < 1e-9 for v in values)
     assert any(abs(v - 42.0) < 1e-9 for v in values)   # percentile as %
     assert any(abs(v - 0.31) < 1e-9 for v in values)
+
+
+def test_render_sentiment_section():
+    from reporting.momentum_scan import SentimentBlock
+    s = SentimentBlock(
+        spy_put_call_volume=D("1.12"), spy_put_call_oi=D("0.95"),
+        spy_atm_iv=D("16.4"), spy_iv_term_slope=D("2.1"),
+        put_call_pctile=D("0.80"),
+        crowding=(), crowding_note="Short-interest crowding unavailable — vendor zeros.",
+        pocket_etf_rows=(("SMH", D("0.88"), D("29.1")),))
+    text = render_scan(_data(sentiment=s))
+    assert "## Crowding & sentiment" in text
+    assert "put/call 1.12 by volume (80th pctile of accumulated scans)" in text
+    assert "ATM IV 16.4%" in text and "term slope +2.1pt" in text
+    assert "| SMH | 0.88 | 29.1% |" in text
+    assert "*Short-interest crowding unavailable — vendor zeros.*" in text
+    context, values, symbols = narrator_inputs(_data(sentiment=s))
+    assert "SENTIMENT:" in context and "SMH" in symbols
+    assert any(abs(v - 1.12) < 1e-9 for v in values)
+    assert any(abs(v - 29.1) < 1e-9 for v in values)

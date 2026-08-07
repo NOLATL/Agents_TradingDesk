@@ -115,3 +115,55 @@ def days_to_cover_flag(days_to_cover: Decimal | None, threshold: Decimal) -> boo
     """True when a squeeze-relevant days-to-cover breaches the config
     threshold."""
     return days_to_cover is not None and days_to_cover >= threshold
+
+
+# --------------------------------------------------------------------------- #
+# Options sentiment (Phase D) — inputs are schwab_chains DIRECT EXTRACTS
+# (per-contract IV/OI/volume); everything below is PYTHON CALC.
+# --------------------------------------------------------------------------- #
+
+def put_call_ratio(contracts, *, field: str) -> Decimal | None:
+    """PUT/CALL ratio over `field` ('volume' or 'open_interest'). None when
+    the call side is zero (no ratio from an empty denominator)."""
+    puts = sum(getattr(c, field) for c in contracts if c.put_call == "PUT")
+    calls = sum(getattr(c, field) for c in contracts if c.put_call == "CALL")
+    if calls <= 0:
+        return None
+    return Decimal(puts) / Decimal(calls)
+
+
+def _atm_iv_at(contracts, spot: Decimal, dtes: Sequence[int]) -> Decimal | None:
+    """Mean IV of the put+call pair at the strike nearest spot for the
+    given expiry bucket."""
+    pool = [c for c in contracts if c.dte in dtes and c.iv is not None]
+    if not pool or spot is None:
+        return None
+    nearest = min(pool, key=lambda c: abs(c.strike - spot))
+    at_strike = [c.iv for c in pool if c.strike == nearest.strike]
+    return sum(at_strike) / len(at_strike) if at_strike else None
+
+
+def atm_iv(chain, *, expiry_index: int = 0) -> Decimal | None:
+    """ATM IV at the chain's expiry_index-th nearest expiry (0 = front)."""
+    dtes = sorted({c.dte for c in chain.contracts if c.dte >= 0})
+    if len(dtes) <= expiry_index:
+        return None
+    return _atm_iv_at(chain.contracts, chain.spot, [dtes[expiry_index]])
+
+
+def iv_term_slope(chain, *, near_dte: int, far_dte: int) -> Decimal | None:
+    """Far-minus-near ATM IV (percent points): positive = contango (calm),
+    negative = inverted (near-term fear). Expiries snap to the closest
+    available DTE on each side; None when the chain can't cover both."""
+    dtes = sorted({c.dte for c in chain.contracts if c.dte >= 0})
+    if len(dtes) < 2:
+        return None
+    near = min(dtes, key=lambda d: abs(d - near_dte))
+    far = min(dtes, key=lambda d: abs(d - far_dte))
+    if near == far:
+        return None
+    near_iv = _atm_iv_at(chain.contracts, chain.spot, [near])
+    far_iv = _atm_iv_at(chain.contracts, chain.spot, [far])
+    if near_iv is None or far_iv is None:
+        return None
+    return far_iv - near_iv

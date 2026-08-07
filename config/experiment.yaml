@@ -148,6 +148,8 @@ scan:
     rel_tolerance_pct: "0.5"                # calibrate during shadow week
     window_sessions: 21
     min_overlap: 10
+  macro_synthesis:
+    enabled: true                           # Saturday scan run writes research/macro/<week>.md
 
   # Pocket universe: each ETF IS a sector/industry/theme pocket. kind is
   # sector | industry | theme-etf ("theme-etf" avoids colliding with desk
@@ -237,7 +239,22 @@ schwab:
     - [normal, "0.75"]
     - [elevated, "0.90"]
     - [stressed, "1.00"]
-  risk_on_off_weights:                      # put_call joins in Phase D
-    vix: "0.5"
+  risk_on_off_weights:
+    vix: "0.4"
     breadth: "0.3"
-    pct_above_avg: "0.2"
+    pct_above_avg: "0.15"
+    put_call: "0.15"                        # percentile needs ~1 month of accumulated chains
+  chains:                                   # Phase D options sentiment
+    spy_symbol: SPY
+    strike_count: 20
+    dte_max: 60
+    term_near_dte: 14
+    term_far_dte: 45
+    put_call_min_obs: 20                    # sessions of accumulated chains before percentile
+    pocket_etfs_on_friday: true
+  fundamentals:
+    pe_crosscheck_tolerance_pct: "5"
+  crowding:
+    days_to_cover_flag: "8"                 # NOTE: Schwab shortInt* fields are vendor zeros
+                                            # (2026-08-07) — crowding abstains until a real
+                                            # SI source (e.g. FINRA files) is added

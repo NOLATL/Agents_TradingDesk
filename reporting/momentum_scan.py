@@ -52,6 +52,19 @@ class MacroTape:
 
 
 @dataclass(frozen=True)
+class SentimentBlock:
+    spy_put_call_volume: Decimal | None = None
+    spy_put_call_oi: Decimal | None = None
+    spy_atm_iv: Decimal | None = None           # percent points
+    spy_iv_term_slope: Decimal | None = None    # far - near, percent points
+    put_call_pctile: Decimal | None = None      # vs accumulated nightly chains
+    crowding: tuple[tuple[str, Decimal], ...] = ()   # (pocket, SI z)
+    crowding_note: str | None = None
+    pocket_etf_rows: tuple[tuple[str, Decimal | None, Decimal | None], ...] = ()
+    #                       (pocket ETF, put/call volume, ATM IV) — Friday runs
+
+
+@dataclass(frozen=True)
 class PocketRow:
     ticker: str
     name: str
@@ -88,6 +101,7 @@ class ScanReportData:
     referee_notes: tuple[str, ...] = ()
     macro: MacroTape | None = None
     schwab_dark_note: str | None = None    # "Schwab dark since <date>: <why>"
+    sentiment: SentimentBlock | None = None
     snapshot_refreshed: datetime | None = None
     narration: str | None = None
     narration_note: str | None = None
@@ -196,6 +210,28 @@ def narrator_inputs(data: ScanReportData) -> tuple[str, set[float], set[str]]:
                 values.add(float(mv.net_pct))
             lines.append(f"- mover {mv.symbol}"
                          + (f" {float(mv.net_pct):+.1f}%" if mv.net_pct is not None else ""))
+
+    if data.sentiment:
+        s = data.sentiment
+        lines += ["", "SENTIMENT:"]
+        for label, v in (("SPY put/call volume", s.spy_put_call_volume),
+                         ("SPY put/call open interest", s.spy_put_call_oi),
+                         ("SPY ATM IV", s.spy_atm_iv),
+                         ("SPY IV term slope", s.spy_iv_term_slope),
+                         ("put/call percentile", s.put_call_pctile)):
+            if v is not None:
+                values.update({float(v), float(v) * 100})
+                lines.append(f"- {label}: {v}")
+        for ticker, pc_v, iv_v in s.pocket_etf_rows:
+            symbols.add(ticker)
+            for v in (pc_v, iv_v):
+                if v is not None:
+                    values.add(float(v))
+            lines.append(f"- {ticker} put/call {pc_v if pc_v is not None else 'n/a'},"
+                         f" ATM IV {iv_v if iv_v is not None else 'n/a'}")
+        for pocket, z in s.crowding:
+            values.update({float(z), float(z) * 100})
+            lines.append(f"- crowding {pocket}: z {z}")
 
     rows = ([data.index_internals] if data.index_internals else []) + list(data.internals)
     if rows:
@@ -347,6 +383,38 @@ def render_scan(data: ScanReportData) -> str:
                     f" | {_z(it.median_member_composite)}"
                     f" | {it.breadth_pos}/{it.breadth_known} | {pct}"
                     f" | {it.new_highs}/{it.new_lows} | {disp} |")
+
+    if data.sentiment:
+        s = data.sentiment
+        lines += ["", "## Crowding & sentiment", ""]
+        if s.spy_put_call_volume is not None or s.spy_atm_iv is not None:
+            pc = ("—" if s.spy_put_call_volume is None
+                  else f"{float(s.spy_put_call_volume):.2f}")
+            pcoi = ("—" if s.spy_put_call_oi is None
+                    else f"{float(s.spy_put_call_oi):.2f}")
+            pct = ("" if s.put_call_pctile is None
+                   else f" ({float(s.put_call_pctile) * 100:.0f}th pctile of"
+                        " accumulated scans)")
+            iv = ("—" if s.spy_atm_iv is None else f"{float(s.spy_atm_iv):.1f}%")
+            slope = ("—" if s.spy_iv_term_slope is None
+                     else f"{float(s.spy_iv_term_slope):+.1f}pt")
+            lines.append(f"SPY options: put/call {pc} by volume{pct},"
+                         f" {pcoi} by open interest; ATM IV {iv};"
+                         f" term slope {slope}"
+                         " (positive = contango/calm, negative = near-term fear).")
+        if s.pocket_etf_rows:
+            lines += ["", "| Pocket ETF | Put/call | ATM IV |", "|---|---|---|"]
+            for ticker, pc_v, iv_v in s.pocket_etf_rows:
+                lines.append(
+                    f"| {ticker}"
+                    f" | {'—' if pc_v is None else f'{float(pc_v):.2f}'}"
+                    f" | {'—' if iv_v is None else f'{float(iv_v):.1f}%'} |")
+        if s.crowding:
+            lines += ["", "Short-interest crowding (pocket median %float,"
+                          " z across pockets):"]
+            lines += [f"- {pocket}: {float(z):+.2f}" for pocket, z in s.crowding]
+        elif s.crowding_note:
+            lines += ["", f"*{s.crowding_note}*"]
 
     if data.referee_notes:
         lines += ["", "## Cross-vendor referee", ""]

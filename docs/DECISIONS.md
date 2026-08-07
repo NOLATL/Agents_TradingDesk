@@ -727,6 +727,40 @@ the single-name engine); the Alpaca adapter/contract/tests are REMOVED
   FAILED cycle; the Tiingo ETF scan is untouched. `schwab.enabled: false`
   until the first successful login.
 
+## 2026-08-07 — Phase C+D shipped: fundamentals/valuation layer, options sentiment, weekly macro synthesis
+
+Phases C and D of the two-vendor plan, built the day Schwab went live.
+
+- **Phase C.** `analytics/market_context.py` (quarantined; deliberately
+  separate from analyst-permitted `valuation.py` — 52-week/positioning
+  data cannot live there): ValuationSnapshot (vendor-PE cross-checked
+  against price/EPS, 52wk range position, peer-PE percentile), SI
+  crowding. Deep dives gain a deterministic reviewer-domain **Market
+  context** section (render-time derive-on-read, zero role-prompt
+  changes); theme briefs gain valuation/positioning context lines
+  (research-layer tracked switch, Sonnet gate unchanged). Friday 22:45 ET
+  pre-fetch timer (enabled) + Saturday full-universe fundamentals refresh.
+  **Live findings:** the fundamentals endpoint IS batchable (102 symbols /
+  3 documents); Schwab's `shortIntToFloat`/`shortIntDayToCover` are
+  **vendor zeros** — mapped to None (absence, never fake data), crowding
+  abstains with a note. Deferred idea: FINRA's free twice-monthly short
+  interest files as a real SI source.
+- **Phase D.** Nightly SPY option chain (strike_count 20, ≤60 DTE) +
+  Friday pocket-ETF chains → put/call (volume + OI), ATM IV, IV term
+  slope (pure chain math in market_context.py; vendor -999/0 IVs → None).
+  Put/call percentile accumulates over nightly chains (min 20 obs) and
+  joins the risk-on/off composite as the 4th component (weights
+  rebalanced .4/.3/.15/.15). Scan report gains **Crowding & sentiment**.
+  First live chain: 720 contracts, put/call 0.84, ATM IV 13.6, slope
+  +1.5pt.
+- **Weekly macro synthesis** (`research/macro_synthesis.py`, migration 011
+  `'macro_synth'` cycle type): Saturday scan runs write
+  `research/macro/<week>.md` from a deterministic digest of the week's
+  scan reports (narrated Summaries stripped — the synthesis reads data,
+  not prose); **Qwen generates, Sonnet reviews** (invariant 13), REVIEW
+  FAILED banner path, failure notifies + is re-runnable by hand; kept
+  entirely outside ops/weekly_cycle.py (Gate C untouched).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

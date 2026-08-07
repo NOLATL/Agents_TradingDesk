@@ -397,10 +397,99 @@ def _friday_schwab_extras(conn, session: date) -> str | None:
         return f"friday fundamentals failed: {type(e).__name__}: {str(e)[:120]}"
 
 
-def _macro_phase(conn, session: date, index_row):
+def _sentiment_phase(conn, session: date):
+    """Nightly SPY chain (+ Friday pocket-ETF chains) → put/call, ATM IV,
+    term slope, put/call percentile vs accumulated scans; SI crowding
+    (abstains while Schwab's shortInt fields stay vendor zeros).
+    Best-effort. Returns (SentimentBlock | None, put_call_pctile | None,
+    gap_note | None)."""
+    import time
+
+    from analytics.market_context import (
+        atm_iv,
+        iv_term_slope,
+        put_call_ratio,
+        short_interest_crowding,
+    )
+    from analytics.regime import level_percentile
+    from data.adapters import schwab
+    from data.adapters.schwab_auth import SchwabDark
+    from reporting.momentum_scan import SentimentBlock
+
+    cfg = CONFIG.get("schwab", {})
+    ccfg = cfg.get("chains", {})
+    if not cfg.get("enabled") or not ccfg:
+        return None, None, None
+    tag = str(session)
+    try:
+        spy = ccfg.get("spy_symbol", "SPY")
+        doc, _ = schwab.ingest_chain(
+            conn, spy, strike_count=int(ccfg.get("strike_count", 20)),
+            dte_max=int(ccfg.get("dte_max", 60)), session_tag=tag)
+        conn.commit()
+        chain = schwab.parse_chain(doc)
+        pc_vol = put_call_ratio(chain.contracts, field="volume")
+        pc_oi = put_call_ratio(chain.contracts, field="open_interest")
+        iv0 = atm_iv(chain)
+        slope = iv_term_slope(
+            chain, near_dte=int(ccfg.get("term_near_dte", 14)),
+            far_dte=int(ccfg.get("term_far_dte", 45)))
+        history = []
+        for d in schwab.chain_docs_history(conn, spy):
+            r = put_call_ratio(schwab.parse_chain(d).contracts, field="volume")
+            if r is not None:
+                history.append(r)
+        pctile = (level_percentile(
+            pc_vol, history, min_obs=int(ccfg.get("put_call_min_obs", 20)))
+            if pc_vol is not None else None)
+
+        funds, _ = schwab.latest_fundamentals(conn)
+        si = {s: f.short_int_pct_float for s, f in funds.items()
+              if f.short_int_pct_float is not None}
+        crowding: tuple = ()
+        crowding_note = None
+        if si:
+            z = short_interest_crowding(si, _pocket_members(wikipedia.sector_map(conn)))
+            crowding = tuple(sorted(z.items(), key=lambda kv: -kv[1]))
+        else:
+            crowding_note = ("Short-interest crowding unavailable — Schwab's"
+                             " shortInt fields are vendor zeros; needs a real"
+                             " SI source (e.g. FINRA files).")
+
+        pocket_rows = []
+        if session.weekday() == 4 and ccfg.get("pocket_etfs_on_friday"):
+            for p in SCAN_CFG.get("pockets", []):
+                try:
+                    d2, _ = schwab.ingest_chain(
+                        conn, p["ticker"],
+                        strike_count=int(ccfg.get("strike_count", 20)),
+                        dte_max=int(ccfg.get("dte_max", 60)), session_tag=tag)
+                    conn.commit()
+                    ch2 = schwab.parse_chain(d2)
+                    pocket_rows.append((p["ticker"],
+                                        put_call_ratio(ch2.contracts, field="volume"),
+                                        atm_iv(ch2)))
+                except Exception:  # noqa: BLE001 — one ETF chain is garnish
+                    conn.rollback()
+                time.sleep(0.5)
+        return SentimentBlock(
+            spy_put_call_volume=pc_vol, spy_put_call_oi=pc_oi,
+            spy_atm_iv=iv0, spy_iv_term_slope=slope, put_call_pctile=pctile,
+            crowding=crowding, crowding_note=crowding_note,
+            pocket_etf_rows=tuple(pocket_rows),
+        ), pctile, None
+    except SchwabDark as e:
+        return None, None, f"skipped (Schwab dark: {e})"
+    except Exception as e:  # noqa: BLE001 — sentiment must not cost the scan
+        conn.rollback()
+        return None, None, f"failed: {type(e).__name__}: {str(e)[:120]}"
+
+
+def _macro_phase(conn, session: date, index_row, put_call_pctile=None):
     """Schwab macro tape: index/futures/forex quotes, VIX percentile +
-    regime, movers, risk-on/off composite. Best-effort; returns
-    (MacroTape | None, dark_note | None)."""
+    regime, movers, risk-on/off composite (put/call percentile joins as
+    the fourth component when the accumulated chain window is deep
+    enough). Best-effort; returns (MacroTape | None, dark_note | None)."""
     from analytics.regime import (
         component_score_from_percentile,
         level_percentile,
@@ -467,6 +556,8 @@ def _macro_phase(conn, session: date, index_row):
                     if vix_pct is not None else None),
             "breadth": None,
             "pct_above_avg": None,
+            "put_call": (component_score_from_percentile(put_call_pctile, invert=True)
+                         if put_call_pctile is not None else None),
         }
         if index_row is not None and index_row.breadth_known:
             share = Decimal(index_row.breadth_pos) / index_row.breadth_known
@@ -515,6 +606,57 @@ def _narrate(conn, data: ScanReportData) -> tuple[str | None, str | None]:
     except Exception as e:  # noqa: BLE001 — narration must not cost the scan
         conn.rollback()
         return None, f"{type(e).__name__}: {str(e)[:200]}"
+
+
+def _maybe_macro_synthesis(conn, session: date) -> None:
+    """Saturday runs (Friday session) write the weekly macro synthesis
+    under a ('macro_synth', week_key) claim. Best-effort: an LLM/gate
+    failure notifies loudly (invariant 13 — never silent) but never costs
+    the scan cycle."""
+    if (session.weekday() != 4
+            or not SCAN_CFG.get("macro_synthesis", {}).get("enabled")):
+        return
+    iso = session.isocalendar()
+    week_key = f"{iso.year}-W{iso.week:02d}"
+    claimed = conn.execute(
+        "INSERT INTO cycle_log (cycle_type, period_key, trigger, status, started_at)"
+        " VALUES ('macro_synth', %s, 'scan', 'RUNNING', %s)"
+        " ON CONFLICT (cycle_type, period_key) DO NOTHING RETURNING id",
+        (week_key, datetime.now(timezone.utc)),
+    ).fetchone()
+    conn.commit()
+    if not claimed:
+        row = conn.execute(
+            "SELECT status FROM cycle_log WHERE cycle_type='macro_synth'"
+            " AND period_key=%s", (week_key,)).fetchone()
+        if row and row[0] == "COMPLETE":
+            return
+        conn.execute(
+            "UPDATE cycle_log SET status='RUNNING', error=NULL, started_at=%s"
+            " WHERE cycle_type='macro_synth' AND period_key=%s",
+            (datetime.now(timezone.utc), week_key))
+        conn.commit()
+    try:
+        from research.macro_synthesis import write_synthesis
+        path = write_synthesis(conn, week_key)
+        conn.execute(
+            "UPDATE cycle_log SET status='COMPLETE', phase='written', finished_at=%s"
+            " WHERE cycle_type='macro_synth' AND period_key=%s",
+            (datetime.now(timezone.utc), week_key))
+        conn.commit()
+        print(f"macro synthesis {week_key} → {path}")
+    except Exception as e:  # noqa: BLE001 — synthesis must not cost the scan
+        conn.rollback()
+        conn.execute(
+            "UPDATE cycle_log SET status='FAILED', finished_at=%s, error=%s"
+            " WHERE cycle_type='macro_synth' AND period_key=%s",
+            (datetime.now(timezone.utc), f"{type(e).__name__}: {str(e)[:500]}",
+             week_key))
+        conn.commit()
+        notify("Macro synthesis failed",
+               f"{week_key}: {type(e).__name__}: {str(e)[:300]} — re-run:"
+               f" uv run python -m research.macro_synthesis {week_key}",
+               priority="high", tags="warning")
 
 
 @loud("momentum_scan")
@@ -572,8 +714,13 @@ def main(as_of_override: str | None = None) -> None:
             if extras_note:
                 gaps.append(("schwab_fundamentals", extras_note))
 
+            phase = "sentiment"
+            sentiment, put_call_pctile, sentiment_note = _sentiment_phase(conn, session)
+            if sentiment_note:
+                gaps.append(("schwab_chains", sentiment_note))
+
             phase = "macro"
-            macro, macro_dark = _macro_phase(conn, session, index_row)
+            macro, macro_dark = _macro_phase(conn, session, index_row, put_call_pctile)
             schwab_dark_note = dark_note or macro_dark
             if schwab_dark_note:
                 schwab_dark_note += " — run: uv run python -m ops.schwab_auth login"
@@ -633,6 +780,7 @@ def main(as_of_override: str | None = None) -> None:
                 internals=internals, index_internals=index_row,
                 internals_note=internals_note, referee_notes=referee_notes,
                 macro=macro, schwab_dark_note=schwab_dark_note,
+                sentiment=sentiment,
             )
 
             phase = "narrate"
@@ -644,6 +792,9 @@ def main(as_of_override: str | None = None) -> None:
             path = write_scan_report(render_scan(data), session)
             print(f"momentum scan {session}: {len(pocket_rows)} pockets ranked,"
                   f" {len(gaps)} gaps → {path}")
+
+            phase = "macro_synthesis"
+            _maybe_macro_synthesis(conn, session)
 
             finish_scan_cycle(
                 conn, cycle, "COMPLETE",

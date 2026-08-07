@@ -392,6 +392,80 @@ def parse_movers(doc: Document) -> list[MoverRow]:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Option chains (schwab_chains) — Phase D
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class OptionContract:
+    put_call: str                # PUT | CALL
+    strike: Decimal
+    dte: int
+    iv: Decimal | None           # percent points; vendor -999/0 → None
+    open_interest: int
+    volume: int
+
+
+@dataclass(frozen=True)
+class ChainSnap:
+    symbol: str
+    spot: Decimal | None
+    contracts: tuple[OptionContract, ...]
+
+
+def ingest_chain(conn, symbol: str, *, strike_count: int, dte_max: int,
+                 session_tag: str) -> tuple[Document, bool]:
+    today = datetime.now(timezone.utc).date()
+    params = {
+        "symbol": symbol, "contractType": "ALL",
+        "strikeCount": strike_count, "strategy": "SINGLE",
+        "fromDate": str(today), "toDate": str(today + timedelta(days=dte_max)),
+    }
+    return _fetch(conn, url=f"{BASE}/chains", params=params,
+                  source_name="schwab_chains",
+                  extra_stored={"scan_session": session_tag}, timeout=60.0)
+
+
+def _chain_contracts(exp_map: dict, put_call: str):
+    for _exp_key, strikes in (exp_map or {}).items():
+        for _strike_key, contracts in (strikes or {}).items():
+            for c in contracts or []:
+                try:
+                    iv = c.get("volatility")
+                    iv = None if iv is None or float(iv) <= 0 or float(iv) > 500 else Decimal(str(iv))
+                    yield OptionContract(
+                        put_call=put_call,
+                        strike=Decimal(str(c["strikePrice"])),
+                        dte=int(c.get("daysToExpiration", -1)),
+                        iv=iv,
+                        open_interest=int(c.get("openInterest") or 0),
+                        volume=int(c.get("totalVolume") or 0),
+                    )
+                except (KeyError, TypeError, ValueError, ArithmeticError):
+                    continue
+
+
+def parse_chain(doc: Document) -> ChainSnap:
+    payload = json.loads(doc.raw_bytes)
+    contracts = tuple(_chain_contracts(payload.get("putExpDateMap"), "PUT")) + \
+        tuple(_chain_contracts(payload.get("callExpDateMap"), "CALL"))
+    return ChainSnap(
+        symbol=str(payload.get("symbol", "")).upper(),
+        spot=_dec(payload.get("underlyingPrice")),
+        contracts=contracts,
+    )
+
+
+def chain_docs_history(conn, symbol: str, *, limit: int = 90) -> list[Document]:
+    """Trailing nightly chain documents for `symbol`, oldest first — the
+    derive-on-read base for put/call percentiles."""
+    docs = repo.fetch(
+        conn, Document,
+        "source_name = 'schwab_chains' AND query_params->>'symbol' = %s",
+        (symbol,))
+    return sorted(docs, key=lambda d: d.ingestion_time)[-limit:]
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "quotes"
     symbols = sys.argv[2:] or ["SPY"]

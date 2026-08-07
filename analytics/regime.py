@@ -18,10 +18,13 @@ __all__ = [
 ]
 
 
-def level_percentile(latest: Decimal, history: Sequence[Decimal]) -> Decimal | None:
+def level_percentile(latest: Decimal, history: Sequence[Decimal],
+                     *, min_obs: int = 60) -> Decimal | None:
     """Fraction of historical observations at or below `latest` (0..1).
-    None when history is too thin to mean anything (< 60 observations)."""
-    if latest is None or len(history) < 60:
+    None when history is thinner than `min_obs` (60 for the ~10y VIX
+    distribution; callers with short accumulating windows, like put/call,
+    pass a lower floor)."""
+    if latest is None or len(history) < min_obs:
         return None
     at_or_below = sum(1 for h in history if h <= latest)
     return Decimal(at_or_below) / len(history)
