@@ -359,3 +359,45 @@ def test_shipped_config_has_scan_pockets():
         assert {"ticker", "name", "kind"} <= p.keys()
     assert "pockets" not in CONFIG.get("alpaca", {}), \
         "pockets re-parented under alpaca: — YAML indentation regression"
+
+
+# --------------------------------------------------------------------------- #
+# Phase B: macro tape render + dark mode
+# --------------------------------------------------------------------------- #
+
+def _macro():
+    from reporting.momentum_scan import MacroTape, MoverLine, TapeRow
+    return MacroTape(
+        rows=(TapeRow(symbol="$VIX", label="CBOE Volatility Index",
+                      last=D("17.50"), net_pct=D("-3.20")),
+              TapeRow(symbol="/CL", label="Crude Oil", last=D("81.10"),
+                      net_pct=None)),
+        vix_level=D("17.50"), vix_percentile=D("0.42"), vix_regime="normal",
+        risk_score=D("0.31"), risk_present=3, risk_total=3,
+        movers=(MoverLine(symbol="AAA", description="Aaa Corp",
+                          net_pct=D("4.2")),))
+
+
+def test_render_macro_tape_section():
+    text = render_scan(_data(macro=_macro()))
+    assert "## Macro tape" in text
+    assert "| $VIX CBOE Volatility Index | 17.50 | -3.20% |" in text
+    assert "VIX 17.50, 42th percentile vs 10y — **normal** regime." in text
+    assert "Risk-on/off composite: +0.31 (3/3 components" in text
+    assert "- AAA +4.2% — Aaa Corp" in text
+
+
+def test_render_schwab_dark_note():
+    text = render_scan(_data(schwab_dark_note="Schwab dark since 2026-08-02: refresh token hard-expired"))
+    assert "## Macro tape" in text
+    assert "*Schwab dark since 2026-08-02" in text
+    assert "VIX" not in text
+
+
+def test_narrator_inputs_carry_macro_values_and_symbols():
+    context, values, symbols = narrator_inputs(_data(macro=_macro()))
+    assert "MACRO TAPE:" in context
+    assert {"$VIX", "VIX", "/CL", "CL", "AAA"} <= symbols
+    assert any(abs(v - 17.5) < 1e-9 for v in values)
+    assert any(abs(v - 42.0) < 1e-9 for v in values)   # percentile as %
+    assert any(abs(v - 0.31) < 1e-9 for v in values)

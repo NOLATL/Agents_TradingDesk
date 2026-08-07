@@ -39,7 +39,7 @@ from reporting.momentum_scan import (
     render_scan,
     write_scan_report,
 )
-from schemas.models import CycleLog
+from schemas.models import CycleLog, Document
 
 SCAN_CFG = CONFIG.get("scan", {})
 
@@ -233,10 +233,13 @@ def _pocket_members(sectors: dict[str, tuple[str, str | None]]) -> dict[str, lis
 
 
 def _referee(conn, session: date) -> tuple[str, ...]:
-    """Tiingo-vs-Alpaca adjusted-close referee over the engine-critical
-    overlap (theme universe + benchmarks). Report notes + one classified
-    VENDOR_MISMATCH incident per newly-affected symbol; never mutates
-    price_bars. Any failure degrades to a note."""
+    """Tiingo-vs-Schwab close referee over the engine-critical overlap
+    (theme-universe symbols present in the Schwab singles batch). RAW-close
+    basis with in-window split exclusion (contracts/schwab.yaml
+    referee_rule). Report notes + one classified VENDOR_MISMATCH incident
+    per newly-affected symbol; never mutates price_bars; any failure
+    degrades to a note."""
+    from data.adapters import schwab
     from data.reconcile import raise_incident, referee_universe
     from schemas.enums import IncidentClass
 
@@ -244,16 +247,34 @@ def _referee(conn, session: date) -> tuple[str, ...]:
     if not cfg.get("enabled"):
         return ()
     try:
-        mismatches = referee_universe(
-            conn, session,
-            symbols=sorted(_nightly_symbols(conn)),
+        docs_closes, _ = schwab.latest_single_closes(conn, cutoff=session)
+        overlap = _nightly_symbols(conn) & set(docs_closes)
+        candidate: dict[str, dict] = {}
+        for symbol in sorted(overlap):
+            docs = repo.fetch(
+                conn, Document,
+                "source_name = 'schwab_history' AND query_params->>'symbol' = %s"
+                " AND query_params ? 'scan_session'", (symbol,))
+            if not docs:
+                continue
+            newest = max(docs, key=lambda d: d.ingestion_time)
+            candidate[symbol] = {c.session: c.close
+                                 for c in schwab.parse_candles(newest)}
+        if not candidate:
+            return ("referee: no Schwab overlap with the theme universe yet",)
+        mismatches, excluded = referee_universe(
+            conn, session, candidate_closes=candidate,
             window_sessions=int(cfg.get("window_sessions", 21)),
             rel_tolerance=Decimal(str(cfg.get("rel_tolerance_pct", "0.5"))) / 100,
             min_overlap=int(cfg.get("min_overlap", 10)),
         )
-        if not mismatches:
-            return ("no Tiingo-vs-Alpaca divergence beyond tolerance",)
         notes = []
+        if excluded:
+            notes.append("referee excluded (in-window split): " + ", ".join(excluded))
+        if not mismatches:
+            notes.append(f"no Tiingo-vs-Schwab divergence beyond tolerance"
+                         f" ({len(candidate)} symbols compared)")
+            return tuple(notes)
         by_symbol: dict[str, list] = {}
         for m in mismatches:
             by_symbol.setdefault(m.symbol, []).append(m)
@@ -262,7 +283,7 @@ def _referee(conn, session: date) -> tuple[str, ...]:
             note = (f"{symbol}: {len(rows)} session(s) diverge >"
                     f"{cfg.get('rel_tolerance_pct', '0.5')}% (worst"
                     f" {float(worst.rel_diff) * 100:.2f}% on {worst.session}:"
-                    f" tiingo {worst.reference_close} vs alpaca {worst.candidate_close})")
+                    f" tiingo {worst.reference_close} vs schwab {worst.candidate_close})")
             notes.append(note)
             already_open = conn.execute(
                 "SELECT 1 FROM data_incidents WHERE incident_class = 'VENDOR_MISMATCH'"
@@ -271,7 +292,7 @@ def _referee(conn, session: date) -> tuple[str, ...]:
             if not already_open:
                 raise_incident(
                     conn, incident_class=IncidentClass.VENDOR_MISMATCH,
-                    source_name="alpaca_scan", symbol=symbol, description=note)
+                    source_name="schwab_history", symbol=symbol, description=note)
         conn.commit()
         notify("Cross-vendor price mismatch",
                "; ".join(notes)[:400], priority="default", tags="warning")
@@ -282,42 +303,36 @@ def _referee(conn, session: date) -> tuple[str, ...]:
 
 
 def _single_name_phase(conn, session: date, horizons):
-    """Alpaca ingest + pocket internals + referee. Fully best-effort: any
-    failure degrades to an internals_note; the ETF scan is never touched.
-    Returns (internals, index_internals, internals_note, referee_notes,
-    alpaca_closes) — alpaca_closes feeds the price_source flip."""
-    from data.adapters import alpaca
+    """Schwab singles ingest (~503 pricehistory calls, throttled) + pocket
+    internals + referee. Fully best-effort: SchwabDark or any failure
+    degrades to notes; the Tiingo ETF scan is never touched. Returns
+    (internals, index_internals, internals_note, referee_notes, dark_note).
+    """
+    from data.adapters import schwab
+    from data.adapters.schwab_auth import SchwabDark
 
-    alpaca_cfg = CONFIG.get("alpaca", {})
-    if not alpaca_cfg.get("enabled") or not SCAN_CFG.get("include_sp500_members"):
-        return (), None, None, (), {}
+    schwab_cfg = CONFIG.get("schwab", {})
+    if not schwab_cfg.get("enabled") or not SCAN_CFG.get("include_sp500_members"):
+        return (), None, None, (), None
     try:
         constituents = wikipedia.sector_map(conn)
         if not constituents:
-            return (), None, "constituents snapshot empty — internals off", (), {}
-        etf_tickers = [p["ticker"] for p in SCAN_CFG.get("pockets", [])]
-        universe = sorted(set(constituents) | set(etf_tickers))
-        adjustments: tuple[str, ...] = ("all",)
-        if session.weekday() == int(alpaca_cfg.get("raw_pass_session_weekday", 4)):
-            adjustments = ("all", "raw")
-        fetched, hits, gaps = alpaca.ingest_scan_universe(
-            conn, universe, session=session,
-            history_days=int(alpaca_cfg.get("history_days", 130)),
-            chunk_size=int(alpaca_cfg.get("chunk_size", 100)),
-            max_requests=int(alpaca_cfg.get("max_requests_per_run", 40)),
-            adjustments=adjustments,
-            feed=alpaca_cfg.get("feed", "sip"),
+            return (), None, "constituents snapshot empty — internals off", (), None
+        fetched, hits, gaps = schwab.ingest_singles(
+            conn, sorted(constituents), session=session,
+            history_days=int(schwab_cfg.get("history_days", 130)),
+            throttle_rps=float(schwab_cfg.get("throttle_rps", 2)),
+            max_requests=int(schwab_cfg.get("max_requests_per_run", 560)),
         )
-        closes, scan_session = alpaca.latest_scan_closes(conn, cutoff=session)
-        bars, _ = alpaca.latest_scan_bars(conn, adjustment="all")
-        fresh = {s: series for s, series in closes.items()
-                 if bars.get(s) and bars[s][-1].session >= session}
-        stale = len(closes) - len(fresh)
-        single_names = {s: v for s, v in fresh.items() if s in constituents}
+        closes, _ = schwab.latest_single_closes(conn, cutoff=session)
+        last_sessions = schwab.latest_single_last_sessions(conn)
+        single_names = {s: v for s, v in closes.items()
+                        if s in constituents and last_sessions.get(s) == session}
+        stale = len(closes) - len(single_names)
         if not single_names:
-            note = (f"Alpaca data covers no fresh single names for {session}"
+            note = (f"Schwab covers no fresh single names for {session}"
                     f" (ingest gaps: {len(gaps)})")
-            return (), None, note, (), {}
+            return (), None, note, (), None
         icfg = SCAN_CFG.get("internals", {})
         kwargs = dict(
             dispersion_horizon_index=int(icfg.get("dispersion_horizon_index", 1)),
@@ -325,7 +340,7 @@ def _single_name_phase(conn, session: date, horizons):
             extreme_window=int(icfg.get("extreme_window_sessions", 63)),
         )
         scores = member_composites(single_names, horizons)
-        members = _pocket_members(wikipedia.sector_map(conn))
+        members = _pocket_members(constituents)
         internals = [
             pocket_internals(
                 name, {s: single_names[s] for s in syms if s in single_names},
@@ -336,19 +351,110 @@ def _single_name_phase(conn, session: date, horizons):
         internals.sort(key=lambda i: (i.median_member_composite is None,
                                       -(i.median_member_composite or 0), i.pocket))
         index_row = index_breadth(single_names, scores, **kwargs)
-        note_bits = [f"alpaca pages fetched {fetched}, cache-hit {hits}"]
+        note_bits = [f"schwab singles fetched {fetched}, cache-hit {hits},"
+                     f" {len(single_names)} fresh"]
         if gaps:
-            note_bits.append(f"{len(gaps)} chunk-symbol gaps")
+            note_bits.append(f"{len(gaps)} symbol gaps")
         if stale:
-            note_bits.append(f"{stale} stale symbols excluded")
-        etf_bars = {s: bars[s] for s in etf_tickers if s in fresh}
+            note_bits.append(f"{stale} stale excluded")
         return (tuple(internals), index_row, "; ".join(note_bits),
-                _referee(conn, session), etf_bars)
-    except alpaca.AlpacaDark as e:
-        return (), None, f"Alpaca dark: {e}", (), {}
+                _referee(conn, session), None)
+    except SchwabDark as e:
+        return (), None, None, (), f"Schwab dark: {e}"
     except Exception as e:  # noqa: BLE001 — internals must not cost the scan
         conn.rollback()
-        return (), None, f"internals failed: {type(e).__name__}: {str(e)[:150]}", (), {}
+        return (), None, f"internals failed: {type(e).__name__}: {str(e)[:150]}", (), None
+
+
+def _macro_phase(conn, session: date, index_row):
+    """Schwab macro tape: index/futures/forex quotes, VIX percentile +
+    regime, movers, risk-on/off composite. Best-effort; returns
+    (MacroTape | None, dark_note | None)."""
+    from analytics.regime import (
+        component_score_from_percentile,
+        level_percentile,
+        risk_on_off,
+        vol_regime,
+    )
+    from data.adapters import schwab
+    from data.adapters.schwab_auth import SchwabDark
+    from reporting.momentum_scan import MacroTape, MoverLine, TapeRow
+
+    cfg = CONFIG.get("schwab", {})
+    if not cfg.get("enabled"):
+        return None, None
+    tag = str(session)
+    try:
+        tape_symbols = list(cfg.get("tape_symbols", []))
+        doc, _ = schwab.ingest_quotes(conn, tape_symbols, session_tag=tag, kind="tape")
+        conn.commit()
+        quotes = schwab.parse_quotes(doc)
+        rows = tuple(
+            TapeRow(symbol=s, label=(quotes[s].description if s in quotes else None),
+                    last=(quotes[s].last if s in quotes else None),
+                    net_pct=(quotes[s].net_pct_change if s in quotes else None))
+            for s in tape_symbols
+        )
+
+        vix_cfg = cfg.get("vix_history", {})
+        vix_symbol = vix_cfg.get("symbol", "$VIX")
+        try:
+            result = schwab.ingest_index_history(
+                conn, vix_symbol,
+                period_years=int(vix_cfg.get("period_years", 10)),
+                max_age_days=int(vix_cfg.get("max_age_days", 7)))
+            if result:
+                conn.commit()
+        except Exception:  # noqa: BLE001 — stale distribution beats no regime
+            conn.rollback()
+        history = [c.close for c in schwab.latest_index_history(conn, vix_symbol)]
+        vix_level = quotes[vix_symbol].last if vix_symbol in quotes else None
+        vix_pct = (level_percentile(vix_level, history)
+                   if vix_level is not None else None)
+        bands = [(label, Decimal(str(v)))
+                 for label, v in cfg.get("regime_bands", [])]
+        regime = vol_regime(vix_pct, bands)
+
+        movers: list[MoverLine] = []
+        mcfg = cfg.get("movers", {})
+        for index in mcfg.get("indexes", []):
+            try:
+                mdoc, _ = schwab.ingest_movers(
+                    conn, index, sort=mcfg.get("sort", "PERCENT_CHANGE_UP"),
+                    session_tag=tag)
+                conn.commit()
+                movers += [MoverLine(symbol=m.symbol, description=m.description,
+                                     net_pct=m.net_pct_change)
+                           for m in schwab.parse_movers(mdoc)[:8]]
+            except Exception:  # noqa: BLE001 — movers are garnish
+                conn.rollback()
+
+        weights = {k: Decimal(str(v))
+                   for k, v in cfg.get("risk_on_off_weights", {}).items()}
+        components: dict[str, Decimal | None] = {
+            "vix": (component_score_from_percentile(vix_pct, invert=True)
+                    if vix_pct is not None else None),
+            "breadth": None,
+            "pct_above_avg": None,
+        }
+        if index_row is not None and index_row.breadth_known:
+            share = Decimal(index_row.breadth_pos) / index_row.breadth_known
+            components["breadth"] = component_score_from_percentile(share)
+        if index_row is not None and index_row.pct_above_avg is not None:
+            components["pct_above_avg"] = component_score_from_percentile(
+                index_row.pct_above_avg)
+        score, present, total = risk_on_off(components, weights)
+
+        return MacroTape(
+            rows=rows, vix_level=vix_level, vix_percentile=vix_pct,
+            vix_regime=regime, risk_score=score, risk_present=present,
+            risk_total=total, movers=tuple(movers),
+        ), None
+    except SchwabDark as e:
+        return None, f"Schwab dark: {e}"
+    except Exception as e:  # noqa: BLE001 — the tape must not cost the scan
+        conn.rollback()
+        return None, f"macro tape failed: {type(e).__name__}: {str(e)[:150]}"
 
 
 def _narrate(conn, data: ScanReportData) -> tuple[str | None, str | None]:
@@ -408,13 +514,17 @@ def main(as_of_override: str | None = None) -> None:
             note = _refresh_constituents(conn)
             if note:
                 gaps.append(("sp500_constituents", note))
+            try:
+                from ops.schwab_auth import check_freshness
+                check_freshness(conn)
+            except Exception as e:  # noqa: BLE001 — a reminder must not cost the scan
+                conn.rollback()
+                print(f"schwab freshness check failed: {e}", file=sys.stderr)
 
             phase = "ingest"
             nightly = _nightly_symbols(conn)
-            use_alpaca_etfs = SCAN_CFG.get("price_source") == "alpaca"
-            to_fetch = ([] if use_alpaca_etfs else
-                        [p["ticker"] for p in pockets_cfg
-                         if p["ticker"] not in nightly])
+            to_fetch = [p["ticker"] for p in pockets_cfg
+                        if p["ticker"] not in nightly]
             fetched, cache_hits, ingest_gaps = _ingest_etfs(conn, to_fetch)
             # An ingest failure only matters if the cached documents can't
             # cover the session — a 429'd symbol whose earlier fetch already
@@ -423,8 +533,14 @@ def main(as_of_override: str | None = None) -> None:
             ingest_notes = dict(ingest_gaps)
 
             phase = "singles"
-            internals, index_row, internals_note, referee_notes, alpaca_etf_bars = (
+            internals, index_row, internals_note, referee_notes, dark_note = (
                 _single_name_phase(conn, session, horizons))
+
+            phase = "macro"
+            macro, macro_dark = _macro_phase(conn, session, index_row)
+            schwab_dark_note = dark_note or macro_dark
+            if schwab_dark_note:
+                schwab_dark_note += " — run: uv run python -m ops.schwab_auth login"
 
             phase = "compute"
             prior = prior_scan_session(session)
@@ -432,16 +548,6 @@ def main(as_of_override: str | None = None) -> None:
             prior_closes: dict[str, list[Decimal]] = {}
             for p in pockets_cfg:
                 ticker = p["ticker"]
-                if use_alpaca_etfs:
-                    abars = alpaca_etf_bars.get(ticker)
-                    if not abars or abars[-1].session < session:
-                        gaps.append((ticker, "STALE (alpaca: no bar for session)"))
-                        continue
-                    closes[ticker] = [b.close for b in abars if b.session <= session]
-                    if prior:
-                        prior_closes[ticker] = [b.close for b in abars
-                                                if b.session <= prior]
-                    continue
                 bars = latest_scan_bars(conn, ticker)
                 if not bars or max(b.session for b in bars) < session:
                     gaps.append((ticker, ingest_notes.get(
@@ -490,6 +596,7 @@ def main(as_of_override: str | None = None) -> None:
                 snapshot_refreshed=wikipedia.snapshot_refreshed_at(conn),
                 internals=internals, index_internals=index_row,
                 internals_note=internals_note, referee_notes=referee_notes,
+                macro=macro, schwab_dark_note=schwab_dark_note,
             )
 
             phase = "narrate"

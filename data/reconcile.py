@@ -66,32 +66,35 @@ def compare_adjusted_closes(
 
 
 def referee_universe(
-    conn, session, *, symbols: list[str], window_sessions: int,
+    conn, session, *, candidate_closes: dict, window_sessions: int,
     rel_tolerance: Decimal, min_overlap: int,
-) -> list[PriceMismatch]:
-    """Compare price_bars (Tiingo adjusted, engine truth) vs the newest
-    alpaca_scan adjusted closes over the trailing window for the given
-    symbols (theme universe + benchmarks). Read-only; callers raise
-    VENDOR_MISMATCH incidents per affected symbol."""
-    from data.adapters.alpaca import latest_scan_bars
-
-    alpaca_bars, _ = latest_scan_bars(conn, adjustment="all")
+) -> tuple[list[PriceMismatch], list[str]]:
+    """Compare price_bars RAW closes (Tiingo, engine truth) vs a candidate
+    vendor's {symbol: {session: close}} over the trailing window. RAW basis
+    because the candidate (Schwab) is split-adjusted-only: raw == split-
+    adjusted when no split occurred, so any symbol with a split inside the
+    window (split_factor != 1) is EXCLUDED and reported — adjustment
+    methodology never pollutes the check (contracts/schwab.yaml
+    referee_rule). Read-only; returns (mismatches, excluded_symbols)."""
     mismatches: list[PriceMismatch] = []
-    for symbol in symbols:
+    excluded: list[str] = []
+    for symbol, candidate in sorted(candidate_closes.items()):
         rows = conn.execute(
-            "SELECT session_date, adj_close FROM price_bars WHERE symbol = %s"
-            " AND session_date <= %s ORDER BY session_date DESC LIMIT %s",
+            "SELECT session_date, close, split_factor FROM price_bars"
+            " WHERE symbol = %s AND session_date <= %s"
+            " ORDER BY session_date DESC LIMIT %s",
             (symbol, session, window_sessions),
         ).fetchall()
-        if not rows or symbol not in alpaca_bars:
+        if not rows:
+            continue
+        if any(r[2] != 1 for r in rows):
+            excluded.append(symbol)
             continue
         reference = {r[0]: r[1] for r in rows}
-        candidate = {b.session: b.close for b in alpaca_bars[symbol]
-                     if b.session <= session}
         mismatches += compare_adjusted_closes(
-            reference, candidate, symbol=symbol,
-            rel_tolerance=rel_tolerance, min_overlap=min_overlap)
-    return mismatches
+            reference, {d: c for d, c in candidate.items() if d <= session},
+            symbol=symbol, rel_tolerance=rel_tolerance, min_overlap=min_overlap)
+    return mismatches, excluded
 
 
 def raise_incident(

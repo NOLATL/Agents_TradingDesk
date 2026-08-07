@@ -690,6 +690,43 @@ rejected energy/supply-chain chain as a revenue-timing-vs-debt-service gap.
   (`lease` matches "release"); prefer phrases (`operating lease`,
   `lease commitment`).
 
+## 2026-08-07 — Phase B shipped: Schwab auth lifecycle, single-name engine, macro tape
+
+Jared's Schwab developer app was created (product access approved 8/7; app
+key/secret held in `.env` only — never in git or LLM context). Built per the
+approved plan + the 2026-07-30 SUPERSEDED note (Schwab replaces Alpaca as
+the single-name engine); the Alpaca adapter/contract/tests are REMOVED
+(git history retains them).
+
+- **Auth lifecycle** (`data/adapters/schwab_auth.py`, `ops/schwab_auth.py`):
+  token file at `SCHWAB_TOKEN_PATH` (chmod 600, outside repo/vault/pg_dump/
+  LLM context); access token auto-refreshes; the 7-day refresh clock is
+  fixed at login and NEVER extended by refreshes. `login` = the Sunday
+  ritual (~90s, paste-the-redirect flow); `status` = hours left.
+  `check_freshness` runs at the top of the scan job: one deduped ntfy
+  `high` inside the 24h window (cycle_log event claim keyed to the token's
+  issue stamp). Missing/expired/rejected token → SchwabDark → report
+  sections render "Schwab dark since …"; cycles always COMPLETE.
+- **Single-name engine** (`contracts/schwab.yaml`, `data/adapters/schwab.py`):
+  nightly `/pricehistory` for ~503 constituents (throttled 2/s ≈ 4.5 min,
+  130-day window, scan_session-tagged immutable documents), lighting up the
+  Phase A pocket-internals section. Split-adjusted-only caveat is a
+  standing report footnote.
+- **Referee reworked** (`data/reconcile.py`): vendor-neutral
+  `referee_universe(candidate_closes=...)` comparing Tiingo RAW closes vs
+  Schwab candle closes; symbols with an in-window split (price_bars.
+  split_factor != 1) are EXCLUDED and reported — adjustment methodology
+  can never fire a false VENDOR_MISMATCH.
+- **Macro tape** (`analytics/regime.py`, scan report "Macro tape" block):
+  batch quotes for $SPX/$DJI/$VIX//ES//CL//GC/EUR-USD; $VIX 10y history
+  (weekly, freshness-gated) → level percentile → regime label (config
+  bands); $SPX movers; risk-on/off composite = None-tolerant weighted mean
+  of vix/breadth/%>50d component scores (put/call joins in Phase D).
+  Narrator guard corpus extended with tape numbers + $-normalized symbols.
+- All Schwab phases are best-effort: dark or failed → notes, never a
+  FAILED cycle; the Tiingo ETF scan is untouched. `schwab.enabled: false`
+  until the first successful login.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

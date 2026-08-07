@@ -25,6 +25,33 @@ QUARANTINE_BANNER = (
 
 
 @dataclass(frozen=True)
+class TapeRow:
+    symbol: str                    # as quoted ($SPX, /ES, EUR/USD)
+    label: str | None
+    last: Decimal | None
+    net_pct: Decimal | None        # day change, percent points (e.g. -0.85)
+
+
+@dataclass(frozen=True)
+class MoverLine:
+    symbol: str
+    description: str | None
+    net_pct: Decimal | None
+
+
+@dataclass(frozen=True)
+class MacroTape:
+    rows: tuple[TapeRow, ...]
+    vix_level: Decimal | None
+    vix_percentile: Decimal | None          # 0..1 vs ~10y history
+    vix_regime: str | None                  # calm/normal/elevated/stressed
+    risk_score: Decimal | None              # -1..+1 composite
+    risk_present: int = 0
+    risk_total: int = 0
+    movers: tuple[MoverLine, ...] = ()
+
+
+@dataclass(frozen=True)
 class PocketRow:
     ticker: str
     name: str
@@ -57,8 +84,10 @@ class ScanReportData:
     # Phase A (three-vendor architecture): single-name internals + referee
     internals: tuple[PocketInternals, ...] = ()
     index_internals: PocketInternals | None = None
-    internals_note: str | None = None      # e.g. "Alpaca dark — internals unavailable"
+    internals_note: str | None = None      # ingest summary / degradation note
     referee_notes: tuple[str, ...] = ()
+    macro: MacroTape | None = None
+    schwab_dark_note: str | None = None    # "Schwab dark since <date>: <why>"
     snapshot_refreshed: datetime | None = None
     narration: str | None = None
     narration_note: str | None = None
@@ -136,6 +165,38 @@ def narrator_inputs(data: ScanReportData) -> tuple[str, set[float], set[str]]:
             pos, known = breadth({r.symbol: r.score.returns[0] for r in rows})
             values.update({float(pos), float(known)})
             lines.append(f"breadth: {pos}/{known} positive {_hlabel(data.horizons[0])}")
+    if data.macro:
+        m = data.macro
+        lines += ["", "MACRO TAPE:"]
+        for r in m.rows:
+            symbols.update({r.symbol, r.symbol.lstrip("$/").replace("/", " ")})
+            for v in (r.last, r.net_pct):
+                if v is not None:
+                    values.add(float(v))
+            day = "n/a" if r.net_pct is None else f"{float(r.net_pct):+.2f}%"
+            lines.append(f"- {r.symbol} ({r.label or 'tape'}): last"
+                         f" {r.last if r.last is not None else 'n/a'}, day {day}")
+        if m.vix_level is not None:
+            values.add(float(m.vix_level))
+            if m.vix_percentile is not None:
+                values.update({float(m.vix_percentile), float(m.vix_percentile) * 100})
+            lines.append(
+                f"- VIX {m.vix_level}"
+                + (f", percentile {float(m.vix_percentile) * 100:.0f}"
+                   if m.vix_percentile is not None else "")
+                + (f", regime {m.vix_regime}" if m.vix_regime else ""))
+        if m.risk_score is not None:
+            values.update({float(m.risk_score),
+                           float(m.risk_present), float(m.risk_total)})
+            lines.append(f"- risk-on/off composite {float(m.risk_score):+.2f}"
+                         f" ({m.risk_present}/{m.risk_total} components)")
+        for mv in m.movers:
+            symbols.add(mv.symbol)
+            if mv.net_pct is not None:
+                values.add(float(mv.net_pct))
+            lines.append(f"- mover {mv.symbol}"
+                         + (f" {float(mv.net_pct):+.1f}%" if mv.net_pct is not None else ""))
+
     rows = ([data.index_internals] if data.index_internals else []) + list(data.internals)
     if rows:
         lines += ["", "POCKET INTERNALS (single-name members, full-index z):"]
@@ -178,6 +239,38 @@ def render_scan(data: ScanReportData) -> str:
                   data.narration, ""]
     elif data.narration_note:
         lines += [f"*Narration unavailable: {data.narration_note}*", ""]
+
+    if data.macro or data.schwab_dark_note:
+        lines += ["## Macro tape", ""]
+        if data.schwab_dark_note:
+            lines += [f"*{data.schwab_dark_note}*", ""]
+        elif data.macro:
+            m = data.macro
+            if m.rows:
+                lines += ["| Series | Last | Day |", "|---|---|---|"]
+                for r in m.rows:
+                    day = "—" if r.net_pct is None else f"{float(r.net_pct):+.2f}%"
+                    last = "—" if r.last is None else f"{float(r.last):,.2f}"
+                    label = f" {r.label}" if r.label else ""
+                    lines.append(f"| {r.symbol}{label} | {last} | {day} |")
+                lines.append("")
+            if m.vix_level is not None:
+                pct = ("" if m.vix_percentile is None
+                       else f", {float(m.vix_percentile) * 100:.0f}th percentile vs 10y")
+                regime = f" — **{m.vix_regime}** regime" if m.vix_regime else ""
+                lines.append(f"VIX {float(m.vix_level):.2f}{pct}{regime}.")
+            if m.risk_score is not None:
+                lines.append(
+                    f"Risk-on/off composite: {float(m.risk_score):+.2f}"
+                    f" ({m.risk_present}/{m.risk_total} components; -1 risk-off,"
+                    " +1 risk-on).")
+            if m.movers:
+                lines += ["", "Movers ($SPX):"]
+                for mv in m.movers:
+                    pct = "" if mv.net_pct is None else f" {float(mv.net_pct):+.1f}%"
+                    desc = f" — {mv.description}" if mv.description else ""
+                    lines.append(f"- {mv.symbol}{pct}{desc}")
+        lines.append("")
 
     lines += ["## Pocket leaderboard", "",
               f"| # | Δ | Pocket | Kind | ETF | Composite z | {' | '.join(_hlabel(x) for x in h)} |",
@@ -230,9 +323,10 @@ def render_scan(data: ScanReportData) -> str:
 
     if data.internals or data.internals_note:
         lines += ["", "## Pocket internals", "",
-                  "*Single-name members per pocket (Alpaca scan bars);"
-                  " member composites z-scored across the full S&P 500"
-                  " cross-section.*"]
+                  "*Single-name members per pocket (Schwab daily candles —"
+                  " split-adjusted only, dividends not reflected in member"
+                  " momentum); member composites z-scored across the full"
+                  " S&P 500 cross-section.*"]
         if data.internals_note:
             lines += ["", f"*{data.internals_note}*"]
         if data.internals:

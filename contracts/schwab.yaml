@@ -1,0 +1,74 @@
+# Data contract: Schwab Trader API (Individual) — Phase B+ of the two-vendor
+# architecture (DECISIONS.md 2026-07-30 + same-day SUPERSEDED note: Alpaca
+# declined, Schwab is BOTH the single-name scan engine and the macro/
+# sentiment/fundamentals layer). DATA ONLY: never order routing; the desk
+# simulator stays internal (anti-scope).
+#
+# Five source_names share this contract, auth, and license:
+#   schwab_history      /marketdata/v1/pricehistory   (one symbol/call)
+#   schwab_quotes       /marketdata/v1/quotes         (batch)
+#   schwab_movers       /marketdata/v1/movers/{index}
+#   schwab_fundamentals /marketdata/v1/instruments?projection=fundamental   (Phase C)
+#   schwab_chains       /marketdata/v1/chains                               (Phase D)
+source_name: schwab
+description: >
+  Market data for the operator-only scan + research layers: single-name
+  daily candles, batch quotes (52wk/PE/divYield), index+futures+forex tape,
+  movers, fundamentals, option chains.
+endpoints:
+  - https://api.schwabapi.com/marketdata/v1/
+auth: >
+  OAuth2, personal brokerage account. App key/secret in .env
+  (SCHWAB_APP_KEY/SECRET); token file at SCHWAB_TOKEN_PATH (chmod 600,
+  outside the repo, the vault, pg_dump, and any LLM context). Access token
+  ~30 min, auto-refreshed. REFRESH TOKEN HARD-EXPIRES EVERY 7 DAYS (no
+  workaround): Sunday-evening `ops.schwab_auth login` ritual, T-24h ntfy
+  reminder. Expired/rejected auth = SchwabDark: report sections render
+  "Schwab dark since <date>"; cycles still COMPLETE. Bearer header never
+  persisted (fetch_and_cache stores query params only).
+
+data_semantics:
+  raw_or_adjusted: >
+    pricehistory candles are SPLIT-ADJUSTED ONLY — no dividend adjustment.
+    Accepted for the scan (human decision 2026-07-30, eyes open): momentum
+    on dividend payers is slightly understated; the scan report carries a
+    standing footnote. Tiingo (dividend-inclusive adjClose) remains the
+    engine's price truth and the referee's reference.
+  timezone: America/New_York
+  session_date_rule: >
+    A daily candle timestamped T covers XNYS session date(T). Quotes,
+    movers, fundamentals, and chains are SNAPSHOTS at ingestion time —
+    tape/context only, never an official close, never fills, never bars.
+    All schwab_* sources: first_eligible_decision_time = ingestion_time
+    (reference data, never a decision input).
+  referee_rule: >
+    Cross-vendor comparison (data/reconcile.py) checks Schwab candle closes
+    against Tiingo RAW closes over a recent window, EXCLUDING any symbol
+    with a split (price_bars.split_factor != 1) inside the window — so
+    adjustment methodology never pollutes the check. Tiingo authoritative.
+  null_rule: >
+    A dark vendor or missing symbol is an absence rendered loudly (dark
+    note / coverage counts), never a synthesized value, never a halt.
+
+revision_policy: >
+  Nightly full-window refetch per symbol (window: scan config); each
+  response cached immutably with a scan_session stored-param tag — the
+  newest complete batch is the set of documents sharing max(scan_session).
+
+source_priority: 2               # scan/context engine; Tiingo stays priority 1
+fallback_sources: [tiingo]       # Schwab dark → ETF-only scan (tiingo_scan)
+expected_publication_delay: >
+  Daily candles final shortly after close; the 00:30 ET scan is safe.
+
+rate_limit: >
+  120 requests/min app-wide. Throttle schwab.throttle_rps (2/s) with
+  headroom. Nightly budget: ~503 pricehistory + ~5 tape/movers calls
+  (~4-5 min); Friday adds fundamentals/chains (Phase C/D, ≤~105 calls).
+  Per-run cap schwab.max_requests_per_run. On 429: skip-and-note, never
+  retried that night.
+
+license_permitted_use: >
+  Personal, individual use of one's own account's market data; NO
+  redistribution or facilitation of redistribution. Local immutable
+  caching for private analysis. Secrets and tokens never in documents,
+  git, or LLM context.
