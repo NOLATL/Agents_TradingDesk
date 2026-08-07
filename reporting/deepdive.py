@@ -30,7 +30,6 @@ EXIT_ORDER = ("PRICE_STOP", "CAUSAL_BREAK", "VALUATION_EXIT", "TIME_STOP")
 SCORE_GREEN_MIN = 0.5
 SCORE_YELLOW_MIN = 0.25
 SPARK_GLYPHS = "▁▂▃▄▅▆▇█"
-BODY_WORDS_TARGET = 4500
 MILESTONE_ICONS = {"PENDING": "⬜", "MET": "✅", "FALSIFIED": "🟥"}
 MARKER_RE = re.compile(r"\[\^A(\d+)\](?!:)")
 
@@ -505,6 +504,27 @@ def _macro_series(macro: list[Assertion]) -> dict[str, list[Assertion]]:
             for sid, obs in sorted(series.items())}
 
 
+def _narrative_words_floor(nar: dict) -> int:
+    """Dynamic body-words floor (2026-08-07, replaces the fixed 4500):
+    the sum of the guard's per-section minimums (narrative_guard.
+    SECTION_TARGETS) over the sections actually PRESENT in this
+    narrative — basket-size-aware (company floor repeats per surviving
+    name) and audit-drop-aware (dropped sections already warn
+    individually; re-flagging their words as "thin prose" double-counts).
+    Render-side only: generation prompts and the guard are untouched."""
+    from reporting.narrative_guard import SECTION_TARGETS
+
+    floor = sum(
+        SECTION_TARGETS[key][0]
+        for key in ("lead", "thesis_narrative", "macro_narrative",
+                    "valuation_discussion", "forecast_rationale",
+                    "risk_discussion", "monitoring_outlook")
+        if nar.get(key))
+    floor += SECTION_TARGETS["company"][0] * sum(
+        1 for c in nar.get("company_narratives", []) if c.get("narrative"))
+    return floor
+
+
 def _narrative_sections(b: DiveBundle) -> tuple[dict, dict[str, str]]:
     """(narrative dict, company narratives by symbol) — empty when absent."""
     nar = (b.narrative or {}).get("narrative") or {}
@@ -557,9 +577,10 @@ def render(conn, thesis: Thesis, week_key: str, packet_doc_id: int | None) -> st
         body_words = b.narrative.get("body_words")
         add(f"- narrative: ~{body_words} body words"
             f" · Sonnet audit: {b.narrative.get('audit', '?')}")
-        if isinstance(body_words, int) and body_words < BODY_WORDS_TARGET:
+        floor = _narrative_words_floor(b.narrative.get("narrative") or {})
+        if isinstance(body_words, int) and floor and body_words < floor:
             b.notes.append(f"narrative body {body_words} words is below the"
-                           f" {BODY_WORDS_TARGET}-word target")
+                           f" {floor}-word floor for its surviving sections")
         for name in b.narrative.get("dropped_sections", []):
             b.notes.append(f"narrative section '{name}' was dropped —"
                            " deterministic fallback below")

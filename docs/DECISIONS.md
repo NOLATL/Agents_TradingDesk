@@ -810,6 +810,15 @@ along daily briefing delivery."
   volume). Valuation/margin TREND tables unlock as weekly fundamentals
   snapshots accumulate (footnoted on the report).
 
+- **Dynamic narrative word floor** (same day, Jared-directed after
+  reviewing the TEST-W32 degraded-rendering banner): the render-side
+  `BODY_WORDS_TARGET = 4500` was implicitly a 7-name-basket shape and
+  double-counted audit drops (it re-flagged dropped sections' missing
+  words as thin prose). Replaced by `_narrative_words_floor`: sum of
+  `narrative_guard.SECTION_TARGETS` minimums over the sections PRESENT
+  in the narrative (company floor repeats per surviving name). Render-
+  side only — generation prompts, guard, and prompt_version untouched.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

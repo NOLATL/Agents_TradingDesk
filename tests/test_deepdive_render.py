@@ -387,12 +387,43 @@ def test_dropped_sections_render_loud_note(conn):
 
 
 def test_low_body_words_renders_loud_note(conn):
+    """Dynamic floor (2026-08-07): sum of guard section minimums over the
+    sections PRESENT — here lead(150) + thesis(600) + 1 company(300) = 1050."""
     with conn.transaction():
         v2, claim, *_ = _dive(conn, "dd-thin")
         _narrative(conn, v2, claim.id, body_words=100)
         out = deepdive.render(conn, v2, WEEK, None)
-        assert "below the 4500-word target" in out
+        assert "below the 1050-word floor" in out
         raise psycopg.Rollback
+
+
+def test_body_words_floor_scales_with_surviving_sections(conn):
+    """A healthy small narrative must NOT warn (the fixed 4500 target would
+    have false-alarmed here); dropped/absent sections don't inflate the bar."""
+    with conn.transaction():
+        v2, claim, *_ = _dive(conn, "dd-healthy-small")
+        _narrative(conn, v2, claim.id, body_words=1100)
+        out = deepdive.render(conn, v2, WEEK, None)
+        assert "word floor" not in out and "word target" not in out
+        raise psycopg.Rollback
+
+
+def test_narrative_words_floor_helper():
+    from reporting.deepdive import _narrative_words_floor
+    assert _narrative_words_floor({}) == 0
+    full = {"lead": "x", "thesis_narrative": "x", "macro_narrative": "x",
+            "valuation_discussion": "x", "forecast_rationale": "x",
+            "risk_discussion": "x", "monitoring_outlook": "x",
+            "company_narratives": [
+                {"symbol": s, "narrative": "x"} for s in
+                ("A", "B", "C", "D", "E", "F", "G")]}
+    # 150+600+400+300+400+300+200 + 7×300 = 4450 (≈ the old fixed 4500
+    # for a seven-name basket — the constant was implicitly this shape)
+    assert _narrative_words_floor(full) == 4450
+    # audit-dropped sections (None / removed) lower the floor
+    partial = {**full, "risk_discussion": None, "monitoring_outlook": None,
+               "company_narratives": full["company_narratives"][:6]}
+    assert _narrative_words_floor(partial) == 4450 - 300 - 200 - 300
 
 
 def test_scoreboard_sparkline_and_mermaid(conn):
