@@ -12,12 +12,13 @@
 import json
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from config.loader import SLICE
+from data import repository as repo
 from data.adapters.core import fetch_and_cache, next_session_open
 from data.db import connect
 from schemas.models import Document
@@ -103,12 +104,19 @@ def parse_observations(doc: Document, series_id: str) -> list[Observation]:
     return out
 
 
+def discovery_series() -> dict[str, str]:
+    """id -> label from config/discovery.yaml (scout [Fn] evidence, 2026-08-07)."""
+    from data.adapters import rss
+    return dict(rss.discovery_config().get("fred_series", {}) or {})
+
+
 def ingest_all() -> dict[str, bool]:
     results = {}
     with connect() as conn:
         # Accepted themes may carry their own macro series (research_config);
         # macro_points silently skips anything never ingested, so the nightly
-        # pull must cover them alongside the slice defaults.
+        # pull must cover them alongside the slice defaults and the scout's
+        # discovery series (config/discovery.yaml, 2026-08-07).
         theme_series = [
             s
             for (rc,) in conn.execute(
@@ -117,11 +125,43 @@ def ingest_all() -> dict[str, bool]:
             )
             for s in rc["fred_series"]
         ]
-        for series in sorted(set(SLICE["fred_series"]) | set(theme_series)):
+        for series in sorted(set(SLICE["fred_series"]) | set(theme_series)
+                             | set(discovery_series())):
             _, fetched = ingest_series(conn, series)
             results[series] = fetched
         conn.commit()
     return results
+
+
+def series_deltas(conn, series_ids: list[str]) -> list[dict]:
+    """Latest CACHED vintage per series -> latest value vs the observations
+    nearest ~3 months and ~12 months prior. Pure read of stored documents —
+    no network, deterministic. A never-ingested series yields nulls (the
+    scout renders it NO DATA and bars citation)."""
+    out = []
+    for sid in series_ids:
+        docs = repo.fetch(
+            conn, Document,
+            "source_name = 'fred' AND query_params->>'series_id' = %s"
+            " ORDER BY ingestion_time DESC LIMIT 1", (sid,))
+        obs = [o for o in (parse_observations(docs[0], sid) if docs else [])
+               if o.value is not None]
+        obs.sort(key=lambda o: o.observation_date)
+        if not obs:
+            out.append({"series": sid, "date": None, "latest": None,
+                        "prior_3m": None, "prior_12m": None})
+            continue
+        last = obs[-1]
+
+        def value_before(days_back: int):
+            target = last.observation_date - timedelta(days=days_back)
+            prior = [o for o in obs if o.observation_date <= target]
+            return prior[-1].value if prior else None
+
+        out.append({"series": sid, "date": last.observation_date,
+                    "latest": last.value, "prior_3m": value_before(85),
+                    "prior_12m": value_before(360)})
+    return out
 
 
 if __name__ == "__main__":

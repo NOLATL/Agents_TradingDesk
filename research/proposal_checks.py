@@ -14,7 +14,11 @@ from datetime import date, datetime, timezone
 
 from data.adapters import tiingo
 
-CITATION_RE = re.compile(r"\[([HE]\d+)\]")
+# Prefix registry (2026-08-07 scale-up): H headlines, E EDGAR term trends,
+# F FRED macro deltas, K 8-K event scans, U USAspending awards, S staged
+# intraday sketches. Membership in the context's issued_ids stays the real
+# gate — the regex only has to admit every prefix build_context can issue.
+CITATION_RE = re.compile(r"\[([A-Z]{1,2}\d+)\]")
 RISING_WORDS = re.compile(
     r"\b(ris|rising|rose|surg|grow|growing|growth|accelerat|increas|climb|spike|soar)",
     re.IGNORECASE,
@@ -77,11 +81,36 @@ def check_citations(evidence_points: list[str], issued_ids: set[str]) -> list[st
     return issues
 
 
+def check_conviction_calibration(proposal) -> list[str]:
+    """Advisory (2026-08-07): a MEDIUM/HIGH self-label must rest on at least
+    two distinct cited headline items — EDGAR term trends and FRED macro
+    deltas are generic, economy-wide corroboration. Deterministic proxy for
+    the prompt's CONVICTION CALIBRATION rule; catching it here feeds back a
+    FREE local regeneration before a Sonnet turn is spent. The reviewer's
+    own conviction assessment remains the semantic backstop."""
+    if proposal.conviction not in ("medium", "high"):
+        return []
+    cited: set[str] = set()
+    for point in proposal.evidence_points:
+        cited |= set(CITATION_RE.findall(point))
+    headlines = {c for c in cited if c.startswith("H")}
+    if len(headlines) >= 2:
+        return []
+    return [
+        f"The proposal self-labels {proposal.conviction.upper()} conviction"
+        f" but cites only {len(headlines)} distinct headline item(s) — term"
+        " and macro trends are generic, economy-wide evidence. Either cite at"
+        " least two specific headline items that name the industry, companies,"
+        " or mechanism you claim, or relabel the proposal LOW conviction and"
+        " say plainly where the evidence is thin."
+    ]
+
+
 def check_directions(evidence_points: list[str], description: str,
                      edgar_directions: dict[str, str]) -> list[str]:
-    """A DECLINED EDGAR term cited alongside rising language is (almost
-    always) the misread-trend failure. Deterministic best-effort; the review
-    gate remains the semantic backstop."""
+    """A DECLINED EDGAR term (or FRED macro delta) cited alongside rising
+    language is (almost always) the misread-trend failure. Deterministic
+    best-effort; the review gate remains the semantic backstop."""
     issues = []
     declined = {i for i, d in edgar_directions.items() if d == "DECLINED"}
     for text in [*evidence_points, description]:
@@ -98,20 +127,22 @@ def check_directions(evidence_points: list[str], description: str,
 
 def record_attempt(conn, session: date, stage: str, passed: bool,
                    issues: str | None, context_chars: int,
-                   model_tag: str) -> None:
+                   model_tag: str, review_conviction: str | None = None) -> None:
     """One instrument row per precheck/review event. Does not commit — the
     caller owns the transaction (the intake rejection path commits these
-    rows explicitly so the instrument survives a rejected night)."""
+    rows explicitly so the instrument survives a rejected night).
+    review_conviction (migration 012): the reviewer's own per-turn label on
+    REVIEW rows — the turns-to-medium / fallback-rate instrument."""
     attempt_no = conn.execute(
         "SELECT count(*) + 1 FROM scout_attempts"
         " WHERE session_date = %s AND stage = %s", (session, stage),
     ).fetchone()[0]
     conn.execute(
         "INSERT INTO scout_attempts (session_date, attempt_no, stage, passed,"
-        " issues, context_chars, model_tag, recorded_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        " issues, context_chars, model_tag, recorded_at, review_conviction)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (session, attempt_no, stage, passed, issues, context_chars,
-         model_tag, datetime.now(timezone.utc)),
+         model_tag, datetime.now(timezone.utc), review_conviction),
     )
 
 
@@ -126,6 +157,7 @@ def precheck_proposal(conn, proposal, issued_ids: set[str],
     issues += check_citations(proposal.evidence_points, issued_ids)
     issues += check_directions(proposal.evidence_points, proposal.description,
                                edgar_directions)
+    issues += check_conviction_calibration(proposal)
     passed = not issues
     message = None
     if issues:

@@ -17,7 +17,7 @@ Adds exactly two local generations (~5 min); no Anthropic spend.
 
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Literal
 
@@ -44,7 +44,8 @@ STOPWORDS = frozenset(
 )
 
 IDEA_SYSTEM = """You are the idea-generation stage of a thematic trading desk's nightly research
-funnel. From the evidence context — headlines [Hn] and SEC EDGAR filing-language trends [En] —
+funnel. From the evidence context — headlines [Hn], SEC EDGAR filing-language trends [En], and
+any other bracketed evidence items (macro deltas [Fn], event scans, staged sketches [Sn]) —
 produce exactly THREE distinct candidate theme ideas. These are sketches, not proposals: a later
 stage picks one winner and develops it with deeper evidence, so your job is breadth and honesty,
 not polish.
@@ -130,6 +131,10 @@ class FunnelResult:
     idea: CandidateIdea
     idea_block: str
     evidence_block: str
+    # Gate survivors the winner beat, best first (2026-08-07 conviction loop):
+    # the STRONGER retries offer these as alternatives so a low-conviction
+    # night explores a different pattern instead of re-polishing one.
+    runners_up: list[CandidateIdea] = field(default_factory=list)
 
 
 def valid_ids(idea: CandidateIdea, issued_ids: set[str]) -> list[str]:
@@ -180,9 +185,10 @@ def _gate_context(ctx, slate: IdeaSlate) -> str:
 
 
 def gate_ideas(conn, *, experiment_id: int, ctx, slate: IdeaSlate,
-               model_tag: str) -> tuple[CandidateIdea | None, str]:
+               model_tag: str) -> tuple[list[CandidateIdea], str]:
     """Generous LLM triage + deterministic enforcement. Returns
-    (winner or None, human-readable verdict summary for the instrument)."""
+    (survivors ranked best first — empty when all killed, human-readable
+    verdict summary for the instrument)."""
     result = llm.structured_call(
         conn,
         role=AgentRole.EVIDENCE_COLLECTOR,
@@ -209,10 +215,10 @@ def gate_ideas(conn, *, experiment_id: int, ctx, slate: IdeaSlate,
                        f" {verdict}: {reason}")
     order = [i for i in result.ranking if i in kept]
     order += [i for i in sorted(kept) if i not in order]  # slate-order fallback
-    winner = slate.ideas[order[0] - 1] if order else None
-    if winner is not None:
-        summary.append(f"winner: idea {order[0]} — {winner.working_title}")
-    return winner, "; ".join(summary)
+    ranked = [slate.ideas[i - 1] for i in order]
+    if ranked:
+        summary.append(f"winner: idea {order[0]} — {ranked[0].working_title}")
+    return ranked, "; ".join(summary)
 
 
 def _idea_terms(idea: CandidateIdea) -> list[str]:
@@ -280,7 +286,9 @@ def deep_evidence(conn, idea: CandidateIdea, ctx) -> str:
     used = 0
     articles = 0
     for eid in valid_ids(idea, ctx.issued_ids):
-        if eid.startswith("H"):
+        # [Sn] staged sketches carry headline_items entries too (title +
+        # article link) so the same full-text pull applies (2026-08-07).
+        if eid.startswith(("H", "S")):
             item = ctx.headline_items.get(eid)
             if item is None or articles >= MAX_ARTICLES or used >= TOTAL_ARTICLE_CAP:
                 continue
@@ -294,7 +302,8 @@ def deep_evidence(conn, idea: CandidateIdea, ctx) -> str:
             lines.append(f"[{eid}] {item['title']} — FULL TEXT EXCERPT ({status}):\n{excerpt}")
             used += len(excerpt)
             articles += 1
-        elif eid.startswith("E"):
+        elif eid.startswith(("E", "K")):
+            # [Kn] 8-K event scans carry filer records too (2026-08-07 P4)
             line = ctx.evidence_lines.get(eid, f"[{eid}]")
             lines.append(f"{line}\n{_filers_line(ctx.edgar_filers.get(eid, []))}")
     return "\n\n".join(lines)
@@ -310,13 +319,14 @@ def run_idea_funnel(conn, *, experiment_id: int, ctx, model_tag: str,
         conn, session, "IDEA", True,
         "; ".join(f"{i.working_title} [{i.domain}]" for i in slate.ideas),
         len(ctx.text), model_tag)
-    winner, summary = gate_ideas(conn, experiment_id=experiment_id, ctx=ctx,
+    ranked, summary = gate_ideas(conn, experiment_id=experiment_id, ctx=ctx,
                                  slate=slate, model_tag=model_tag)
     proposal_checks.record_attempt(
-        conn, session, "IDEA_GATE", winner is not None, summary,
+        conn, session, "IDEA_GATE", bool(ranked), summary,
         len(ctx.text), model_tag)
-    if winner is None:
+    if not ranked:
         return None
+    winner = ranked[0]
     idea_block = (
         "WINNING IDEA (selected by the desk's idea funnel — develop THIS idea"
         " into tonight's proposal; do not switch to a different pattern):\n"
@@ -330,4 +340,5 @@ def run_idea_funnel(conn, *, experiment_id: int, ctx, model_tag: str,
         idea=winner,
         idea_block=idea_block,
         evidence_block=deep_evidence(conn, winner, ctx),
+        runners_up=ranked[1:],
     )

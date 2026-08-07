@@ -378,3 +378,72 @@ def test_fetch_and_cache_redacts_key_on_http_error(monkeypatch):
         )
     assert KEY not in str(ei.value)
     assert "<redacted>" in str(ei.value)
+
+
+# --------------------------------------------------------------------------- #
+# POST caching + USAspending parse (2026-08-07 scale-up P4)
+# --------------------------------------------------------------------------- #
+
+def test_fetch_and_cache_post_persists_body(conn, monkeypatch):
+    """POST support: the JSON body reaches httpx and is persisted verbatim in
+    query_params._post_body (invariant 4 records the full request)."""
+    import json as jsonlib
+
+    seen = {}
+
+    class FakeResponse:
+        content = b'{"results": []}'
+
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, *, params=None, json=None, headers=None,
+                  timeout=None, follow_redirects=False):
+        seen.update(method="POST", url=url, json=json)
+        return FakeResponse()
+
+    monkeypatch.setattr(core.httpx, "post", fake_post)
+    with conn.transaction():
+        body = {"filters": {"award_type_codes": ["A"]}, "limit": 2}
+        doc, fetched = core.fetch_and_cache(
+            conn, url="https://api.usaspending.gov/api/v2/search/spending_by_award/",
+            params=None, method="POST", json_body=body,
+            source_name="usaspending", license_note="test",
+            first_eligible_decision_time=datetime.now(UTC))
+        assert fetched and seen["method"] == "POST" and seen["json"] == body
+        assert doc.query_params["_post_body"] == jsonlib.dumps(body, sort_keys=True)
+        # idempotent: identical response bytes dedup to the stored document
+        doc2, fetched2 = core.fetch_and_cache(
+            conn, url="https://api.usaspending.gov/api/v2/search/spending_by_award/",
+            params=None, method="POST", json_body=body,
+            source_name="usaspending", license_note="test",
+            first_eligible_decision_time=datetime.now(UTC))
+        assert not fetched2 and doc2.content_hash == doc.content_hash
+        raise psycopg.Rollback
+
+
+def test_usaspending_parse_awards():
+    from data.adapters import usaspending
+
+    payload = {
+        "results": [
+            {"Award ID": "W911", "Recipient Name": "Anduril Industries",
+             "Award Amount": 412000000.0, "Awarding Agency": "Department of Defense",
+             "Awarding Sub Agency": "Dept of the Army", "Start Date": "2026-08-01",
+             "Description": "  counter-uas systems  ", "NAICS": "336411"},
+            {"Award ID": "X1", "Recipient Name": "NoAmount Co",
+             "Award Amount": None},
+        ]
+    }
+    import json as jsonlib
+
+    doc = Document(
+        content_hash="x" * 64, raw_bytes=jsonlib.dumps(payload).encode(),
+        retrieval_url="u", source_name="usaspending",
+        ingestion_time=datetime.now(UTC),
+        first_eligible_decision_time=datetime.now(UTC))
+    awards = usaspending.parse_awards(doc)
+    assert len(awards) == 1  # amount-less rows dropped
+    assert awards[0]["recipient"] == "Anduril Industries"
+    assert awards[0]["amount"] == 412000000.0
+    assert awards[0]["description"] == "counter-uas systems"

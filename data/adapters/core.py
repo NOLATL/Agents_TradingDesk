@@ -4,6 +4,7 @@ derivation (invariant 2, per-contract session-date rules via exchange_calendars)
 """
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -70,8 +71,14 @@ def fetch_and_cache(
     stored_params: dict[str, Any] | None = None,
     timeout: float = 30.0,
     follow_redirects: bool = False,
+    method: str = "GET",
+    json_body: dict | None = None,
 ) -> tuple[Document, bool]:
-    """GET url, cache the raw response immutably. Returns (document, was_fetched).
+    """Fetch url (GET by default; POST with json_body for search-style APIs
+    like USAspending, 2026-08-07), cache the raw response immutably.
+    Returns (document, was_fetched). A POST body is persisted verbatim in
+    query_params['_post_body'] (deterministically serialized) so the stored
+    document records the full request that produced it.
 
     Idempotency: if the response hash already exists in `documents`, the
     existing row is returned untouched and nothing is inserted (invariant 4:
@@ -86,8 +93,14 @@ def fetch_and_cache(
     document's query_params — pass a scrubbed copy when the request params
     contain a secret (e.g. FRED api_key), which must never enter the DB.
     """
-    response = httpx.get(url, params=params, headers=headers, timeout=timeout,
-                         follow_redirects=follow_redirects)
+    if method.upper() == "POST":
+        response = httpx.post(url, params=params, json=json_body,
+                              headers=headers, timeout=timeout,
+                              follow_redirects=follow_redirects)
+    else:
+        response = httpx.get(url, params=params, headers=headers,
+                             timeout=timeout,
+                             follow_redirects=follow_redirects)
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -110,15 +123,18 @@ def fetch_and_cache(
         return existing, False
 
     ingestion_time = datetime.now(timezone.utc)
+    stored = {
+        k: str(v)
+        for k, v in (stored_params if stored_params is not None else params or {}).items()
+    }
+    if json_body is not None:
+        stored["_post_body"] = json.dumps(json_body, sort_keys=True)
     doc = Document(
         content_hash=h,
         raw_bytes=raw,
         extracted_text=None,
         retrieval_url=url,
-        query_params={
-            k: str(v)
-            for k, v in (stored_params if stored_params is not None else params or {}).items()
-        },
+        query_params=stored,
         source_name=source_name,
         license_note=license_note,
         ingestion_time=ingestion_time,

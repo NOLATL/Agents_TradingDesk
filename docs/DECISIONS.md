@@ -819,6 +819,47 @@ along daily briefing delivery."
   in the narrative (company floor repeats per surviving name). Render-
   side only — generation prompts, guard, and prompt_version untouched.
 
+## 2026-08-07 — Scout scale-up: conviction loop, intraday watch, wider evidence (human-directed)
+
+Jared's directive: make the nightly scout produce stronger, more varied,
+higher-confidence ideas. Four phases, each independently shippable; all
+human-confirmed 2026-08-07.
+
+- **Phase 1 — conviction-seeking review loop** (`research/review_gate.py
+  generate_with_conviction_review`, migration 012): the Sonnet gate emits
+  `ConvictionVerdict{approve, conviction, critique}` — the reviewer assesses
+  conviction ITSELF, never trusting Qwen's self-label. Up to **6 turns**
+  seeking approved >= medium. Approved-LOW drafts bank as the fallback
+  (first one wins — later turns drift speculative) while `improve_feedback`
+  offers the funnel's runner-up ideas as alternatives; rejections regenerate
+  with the critique as before. Exhaustion (or a gate infrastructure failure
+  mid-loop) publishes the banked draft labeled `published_as_fallback` —
+  one candidate per session (invariant 9) is preserved; an approved draft
+  is never discarded (invariant 13 extension). Per-turn reviewer conviction
+  recorded in `scout_attempts.review_conviction`; outcome carries
+  `review_conviction` + `fallback` into the briefing and ntfy. Review calls
+  now cache the stable evidence context (1h-TTL breakpoint; the per-turn
+  symbol-identity tail lives outside the cached block) — worst-case ~6
+  Sonnet calls/night ≈ $0.45 uncached, materially less with cache hits;
+  expected ~$3–5/mo. `data/llm_usage.jsonl` now logs cache tokens and
+  prices them (2x write for 1h TTL, 0.1x read).
+- **Phase 2 — context/quality upgrades**: FRED deltas as `[Fn]` evidence,
+  citation-prefix registry, coverage-balance hint, advisory evidence-
+  strength precheck, RSS broadening with per-sector sampling.
+- **Phase 3 — intraday Qwen watch** (migration 013, `research/
+  intraday_watch.py`, `ops/intraday_scout.py`, `trading-desk-intraday.timer`
+  at 07/11/15/19 ET, 7 days/week): local-only funnel batches accumulate
+  scored idea sketches into `idea_sketches`; the 23:00 scout gates the
+  combined slate (fresh ideas + staged best-of-day, weekend batches feed
+  Monday). Zero Anthropic spend intraday; nothing publishes without the
+  nightly Sonnet gate (invariant 13 intact).
+- **Phase 4 — new evidence sources**: EDGAR 8-K material-event scan `[Kn]`,
+  USAspending.gov contract awards `[Un]` (POST support added to
+  `fetch_and_cache`, body hashed into the content address), and a
+  human-gated dynamic EDGAR-term registry (migration 014, `ops.approve
+  terms` CLI). ClinicalTrials/Form 4/GDELT deferred. `futures_watch` stays
+  UNWIRED from the scout — price-structure signal, barred by invariant 5.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

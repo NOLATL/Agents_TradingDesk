@@ -163,10 +163,21 @@ def parse_headlines(doc: Document) -> list[dict]:
     ]
 
 
+def feed_groups() -> dict[str, str]:
+    """feed url -> sector group key from discovery.yaml (2026-08-07: lets
+    the scout balance its context window across sectors)."""
+    return {
+        url: group
+        for group, urls in discovery_config().get("rss_feeds", {}).items()
+        for url in urls
+    }
+
+
 def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
-    """Deduped {title, summary, link, body} items from the newest cached
-    copy of each feed, newest first. Undated items are kept (many feeds
-    omit dates) but sorted last."""
+    """Deduped {title, summary, link, body, group} items from the newest
+    cached copy of each feed, newest first. Undated items are kept (many
+    feeds omit dates) but sorted last. group is the discovery.yaml sector
+    key (None for a feed since removed from config)."""
     docs = repo.fetch(
         conn, Document,
         "source_name = 'rss' ORDER BY ingestion_time DESC",
@@ -174,15 +185,18 @@ def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
     newest_per_feed: dict[str, Document] = {}
     for doc in docs:
         newest_per_feed.setdefault(doc.retrieval_url, doc)
+    groups = feed_groups()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     rows = []
     for doc in newest_per_feed.values():
+        group = groups.get(doc.retrieval_url)
         for item in parse_items(doc):
             published = item["published"]
             if published is not None and published.tzinfo is None:
                 published = published.replace(tzinfo=timezone.utc)
             if published is not None and published < cutoff:
                 continue
+            item["group"] = group
             rows.append((published or datetime.min.replace(tzinfo=timezone.utc), item))
     rows.sort(key=lambda r: r[0], reverse=True)
     seen, items = set(), []
@@ -190,7 +204,8 @@ def recent_items(conn, hours: int = 168, limit: int = 120) -> list[dict]:
         if item["title"] not in seen:
             seen.add(item["title"])
             items.append({"title": item["title"], "summary": item["summary"],
-                          "link": item.get("link"), "body": item.get("body")})
+                          "link": item.get("link"), "body": item.get("body"),
+                          "group": item.get("group")})
     return items[:limit]
 
 

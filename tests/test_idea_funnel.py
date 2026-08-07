@@ -100,6 +100,9 @@ def test_winner_path_writes_idea_and_gate_rows(conn, monkeypatch):
         assert result is not None and result.idea.working_title == "B"
         assert "WINNING IDEA" in result.idea_block
         assert "DEEP EVIDENCE" in result.evidence_block
+        # ranked survivors the winner beat feed the conviction loop's
+        # seek-stronger retries (2026-08-07)
+        assert [i.working_title for i in result.runners_up] == ["A"]
         rows = conn.execute(
             "SELECT stage, passed FROM scout_attempts WHERE session_date = %s"
             " ORDER BY id", (SESSION,)).fetchall()

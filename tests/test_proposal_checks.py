@@ -120,3 +120,41 @@ def test_symbol_identity_block(conn):
         assert "US rare-earth mining" in block
         assert "VULN: NOT FOUND" in block
         raise psycopg.Rollback
+
+
+def proposal(conviction="low", evidence_points=None, symbols=("MP",)):
+    return CandidateProposal(
+        slug="pc-test", title="T", description="pattern",
+        symbols=list(symbols),
+        evidence_points=evidence_points or ["[H1][E1] point", "[H2] point"],
+        conviction=conviction)
+
+
+def test_citation_regex_admits_new_prefixes():
+    """2026-08-07 prefix registry: [Fn]/[Kn]/[Un]/[Sn] parse like [Hn]/[En];
+    membership in issued_ids stays the real gate."""
+    issued = {"H1", "F2", "K3", "U4", "S5"}
+    issues = proposal_checks.check_citations(
+        ["[H1][F2] macro point", "[K3][U4][S5] event point"], issued)
+    assert issues == []
+    issues = proposal_checks.check_citations(["[F9] ghost point"], issued)
+    assert any("F9" in i for i in issues)
+
+
+def test_conviction_calibration_advisory():
+    """MEDIUM/HIGH self-labels need >= 2 distinct cited headlines; LOW is
+    never flagged (2026-08-07 evidence-strength precheck)."""
+    # generic evidence base: term trends only
+    flagged = proposal_checks.check_conviction_calibration(
+        proposal("medium", ["[E1] trend", "[E2][F1] macro"]))
+    assert flagged and "MEDIUM" in flagged[0] and "relabel" in flagged[0]
+    # one headline is still thin
+    flagged = proposal_checks.check_conviction_calibration(
+        proposal("high", ["[H1][E1] point", "[E2] trend"]))
+    assert flagged
+    # two distinct headlines pass
+    assert proposal_checks.check_conviction_calibration(
+        proposal("medium", ["[H1][E1] point", "[H2] point"])) == []
+    # low conviction is always acceptable
+    assert proposal_checks.check_conviction_calibration(
+        proposal("low", ["[E1] trend"])) == []

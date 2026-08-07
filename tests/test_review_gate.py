@@ -147,3 +147,144 @@ def test_system_and_callable_context_pass_through(monkeypatch):
     assert seen["context"] == "base + symbol identities"  # evaluated at review time
     assert seen["system"] == "SCOUT RUBRIC"
     assert seen["context_cap"] == 40000
+
+
+# --- conviction-seeking loop (2026-08-07 scale-up) -------------------------
+
+def cv(approve: bool, conviction: str = "low", critique: str = "c"):
+    return review_gate.ConvictionVerdict(
+        approve=approve, conviction=conviction, critique=critique)
+
+
+def counting_generate(drafts: list):
+    def generate(feedback):
+        drafts.append(feedback)
+        return f"draft-{len(drafts)}"
+    return generate
+
+
+def test_conviction_medium_publishes_on_first_turn(monkeypatch):
+    monkeypatch.setattr(review_gate, "review",
+                        lambda *a, **k: cv(True, "medium", "solid"))
+    drafts = []
+    result = review_gate.generate_with_conviction_review(
+        counting_generate(drafts), kind="t", context="ctx")
+    assert result.approved and not result.fallback
+    assert result.conviction == "medium" and result.turns == 1
+    assert result.artifact == "draft-1"
+    assert drafts == [None]
+
+
+def test_approved_low_banks_then_medium_publishes(monkeypatch):
+    verdicts = iter([cv(True, "low", "thin — name the filers"),
+                     cv(True, "high", "strong")])
+    monkeypatch.setattr(review_gate, "review", lambda *a, **k: next(verdicts))
+    drafts, stronger = [], []
+
+    def improve(verdict):
+        stronger.append(verdict.critique)
+        return f"SEEK STRONGER: {verdict.critique}"
+
+    result = review_gate.generate_with_conviction_review(
+        counting_generate(drafts), kind="t", context="ctx",
+        improve_feedback=improve)
+    assert result.approved and not result.fallback
+    assert result.conviction == "high" and result.turns == 2
+    assert result.artifact == "draft-2"
+    # turn 2's feedback came from improve_feedback, not the rejection framing
+    assert drafts == [None, "SEEK STRONGER: thin — name the filers"]
+    assert stronger == ["thin — name the filers"]
+
+
+def test_exhaustion_publishes_first_banked_low(monkeypatch):
+    monkeypatch.setattr(review_gate, "review",
+                        lambda *a, **k: cv(True, "low", "still thin"))
+    drafts = []
+    result = review_gate.generate_with_conviction_review(
+        counting_generate(drafts), kind="t", context="ctx", max_turns=6,
+        improve_feedback=lambda v: "STRONGER")
+    assert result.approved and result.fallback
+    assert result.conviction == "low" and result.turns == 6
+    assert result.artifact == "draft-1"  # FIRST approved-low, not the last
+    assert len(drafts) == 6
+
+
+def test_zero_approvals_exhaustion_rejects(monkeypatch):
+    monkeypatch.setattr(review_gate, "review",
+                        lambda *a, **k: cv(False, "low", "ungrounded"))
+    drafts = []
+    result = review_gate.generate_with_conviction_review(
+        counting_generate(drafts), kind="t", context="ctx", max_turns=3)
+    assert not result.approved and not result.fallback
+    assert result.critique == "ungrounded" and result.turns == 3
+    # rejection turns feed the framed critique back to the generator
+    assert "REJECTED BY REVIEW" in drafts[1] and "ungrounded" in drafts[1]
+
+
+def test_precheck_regens_do_not_consume_turns(monkeypatch):
+    review_calls = []
+
+    def fake_review(kind, artifact, context, **kwargs):
+        review_calls.append(artifact)
+        return cv(True, "medium")
+
+    monkeypatch.setattr(review_gate, "review", fake_review)
+    drafts = []
+    prechecks = iter(["fix ticker", "fix citation", None])
+    result = review_gate.generate_with_conviction_review(
+        counting_generate(drafts), kind="t", context="ctx",
+        precheck=lambda a: next(prechecks), max_precheck_retries=3)
+    assert result.approved and result.turns == 1
+    assert drafts == [None, "fix ticker", "fix citation"]  # free local regens
+    assert review_calls == ["draft-3"]  # exactly ONE Sonnet call
+
+
+def test_gate_failure_mid_loop_publishes_banked(monkeypatch):
+    outcomes = iter([cv(True, "low", "thin"), status_error(529),
+                     status_error(529), status_error(529)])
+
+    def flaky_review(kind, artifact, context, **kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(review_gate, "review", flaky_review)
+    monkeypatch.setattr(review_gate.time, "sleep", lambda s: None)
+    result = review_gate.generate_with_conviction_review(
+        counting_generate([]), kind="t", context="ctx",
+        improve_feedback=lambda v: "STRONGER")
+    # turn 2's gate died after retries — the banked approved draft publishes
+    assert result.approved and result.fallback
+    assert result.artifact == "draft-1"
+    assert "gate failed" in result.critique
+
+
+def test_conviction_loop_passes_tail_verdict_and_cache(monkeypatch):
+    seen = {}
+
+    def fake_review(kind, artifact, context, *, system=None, context_cap=None,
+                    context_tail="", output_format=None, cache=False):
+        seen.update(context=context, context_tail=context_tail,
+                    output_format=output_format, cache=cache)
+        return cv(True, "medium")
+
+    monkeypatch.setattr(review_gate, "review", fake_review)
+    result = review_gate.generate_with_conviction_review(
+        lambda f: "draft", kind="t", context="stable ctx",
+        context_tail=lambda: "per-turn identities")
+    assert result.approved
+    assert seen["context"] == "stable ctx"
+    assert seen["context_tail"] == "per-turn identities"
+    assert seen["output_format"] is review_gate.ConvictionVerdict
+    assert seen["cache"] is True
+
+
+def test_on_review_receives_conviction(monkeypatch):
+    verdicts = iter([cv(False, "low", "bad"), cv(True, "medium", "ok")])
+    monkeypatch.setattr(review_gate, "review", lambda *a, **k: next(verdicts))
+    seen = []
+    review_gate.generate_with_conviction_review(
+        lambda f: "draft", kind="t", context="ctx",
+        on_review=lambda ok, crit, conv: seen.append((ok, crit, conv)))
+    assert seen == [(False, "bad", "low"), (True, "ok", "medium")]

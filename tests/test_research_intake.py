@@ -39,10 +39,12 @@ def clear_todays_scout_theme(conn):
 
 
 def proposal(slug="ri-test-theme"):
+    # Two distinct cited headlines: a MEDIUM self-label passes the 2026-08-07
+    # conviction-calibration precheck (generic-only evidence would regen).
     return candidate_scout.CandidateProposal(
         slug=slug, title="Test theme",
         description="a forming pattern", symbols=["AAA", "BBB"],
-        evidence_points=["[E1] EDGAR mentions doubled",
+        evidence_points=["[E1][H2] EDGAR mentions doubled",
                          "[H1] three independent headlines"],
         conviction="medium",
     )
@@ -53,7 +55,7 @@ def mock_context(monkeypatch):
     monkeypatch.setattr(
         candidate_scout, "build_context",
         lambda *a: candidate_scout.ScoutContext(
-            text="CONTEXT", issued_ids={"H1", "E1"},
+            text="CONTEXT", issued_ids={"H1", "H2", "E1"},
             edgar_directions={"E1": "ROSE"}),
     )
     # Funnel is exercised in its own tests; here it stays out of the way.
@@ -70,7 +72,7 @@ def test_approved_proposal_enters_queue_once_per_day(conn, monkeypatch, mock_con
     _mock_scout_llm(monkeypatch, proposal())
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="solid"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="solid"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -90,7 +92,7 @@ def test_human_proposal_does_not_block_the_scout(conn, monkeypatch, mock_context
     _mock_scout_llm(monkeypatch, proposal(slug="ri-after-human"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="solid"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="solid"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -105,8 +107,8 @@ def test_rejected_proposal_never_enters_queue_and_surfaces(conn, monkeypatch, mo
     _mock_scout_llm(monkeypatch, proposal(slug="ri-rejected"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(
-            approve=False, critique="single-source evidence"),
+        lambda *a, **k: review_gate.ConvictionVerdict(
+            approve=False, conviction="low", critique="single-source evidence"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -124,7 +126,7 @@ def test_duplicate_slug_fails_loudly(conn, monkeypatch, mock_context):
     _mock_scout_llm(monkeypatch, proposal(slug="ri-duplicate"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -139,7 +141,7 @@ def test_unusable_slug_fails_loudly(conn, monkeypatch, mock_context):
     _mock_scout_llm(monkeypatch, proposal(slug="???"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -169,7 +171,7 @@ def test_clean_proposal_gets_one_identity_refinement_pass(conn, monkeypatch, moc
         lambda *a: "\n\nSYMBOL DIRECTORY CHECK:\n- AAA = Alpha Alloys (NYSE)")
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -190,7 +192,7 @@ def test_human_rejected_theme_frees_the_session_slot(conn, monkeypatch, mock_con
     _mock_scout_llm(monkeypatch, proposal(slug="ri-after-reject"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -216,7 +218,7 @@ def test_funnel_crash_falls_back_to_single_pass(conn, monkeypatch, mock_context)
     _mock_scout_llm(monkeypatch, proposal(slug="ri-fallback"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)
@@ -254,7 +256,7 @@ def test_funnel_win_enriches_generation_context(conn, monkeypatch, mock_context)
     monkeypatch.setattr(candidate_scout.llm, "structured_call", fake_llm)
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)

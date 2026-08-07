@@ -6,7 +6,7 @@ the consolidated pipeline surfaces: theme queue, thesis decisions pending,
 per-thesis monitoring (one line per ACTIVE thesis EVERY day — a missing row
 renders loudly as MONITOR GAP), desk activity, incidents, pipeline health."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -106,16 +106,22 @@ def _scout_outcome_lines(conn, session: date) -> list[str]:
     """The scout transparency line (migration 006): confirms the nightly
     scout ran and says what happened, even when nothing entered the queue."""
     row = conn.execute(
-        "SELECT session_date, outcome, slug, title, detail, conviction"
+        "SELECT session_date, outcome, slug, title, detail, conviction,"
+        " review_conviction, fallback"
         " FROM scout_outcomes ORDER BY session_date DESC LIMIT 1"
     ).fetchone()
     if row is None:
         return []
-    d, outcome, slug, title, detail, conviction = row
+    d, outcome, slug, title, detail, conviction, review_conviction, fallback = row
     when = "Nightly scout" if d == session else f"Nightly scout (last ran {d})"
     conviction_note = (
         f" Scout conviction: **{conviction.upper()}**." if conviction else ""
     )
+    if review_conviction:
+        conviction_note += (
+            f" Reviewer conviction: **{review_conviction.upper()}**"
+            + (" _(published as fallback — no medium-conviction theme landed"
+               " within the turn budget)_." if fallback else "."))
     # Human-seeded night (migration 011): a seed consumed on this session
     # means the proposal was developed from the operator's queued idea.
     # ERROR nights leave the seed PENDING (no consumed_on), so no label.
@@ -145,6 +151,28 @@ def _scout_outcome_lines(conn, session: date) -> list[str]:
                 f" — {detail or 'no detail recorded'}.", ""]
 
 
+def _scout_gate_instrument_lines(conn, session: date) -> list[str]:
+    """Conviction-loop instrument (migration 012, 2026-08-07): average review
+    turns per night and the fallback share over the trailing 14 days — the
+    readout that says whether the evidence upgrades are actually raising the
+    medium-conviction hit rate."""
+    since = session - timedelta(days=14)
+    turns = conn.execute(
+        "SELECT avg(n)::numeric(4,1) FROM (SELECT count(*) AS n"
+        " FROM scout_attempts WHERE stage = 'REVIEW' AND session_date > %s"
+        " GROUP BY session_date) per_night", (since,),
+    ).fetchone()[0]
+    proposed, fallbacks = conn.execute(
+        "SELECT count(*) FILTER (WHERE outcome = 'PROPOSED'),"
+        " count(*) FILTER (WHERE outcome = 'PROPOSED' AND fallback)"
+        " FROM scout_outcomes WHERE session_date > %s", (since,),
+    ).fetchone()
+    if turns is None or not proposed:
+        return []
+    return [f"- _Scout gate, last 14d: avg {turns} review turn(s)/night;"
+            f" {fallbacks}/{proposed} proposal(s) published as fallback_", ""]
+
+
 def _theme_queue_section(conn, session: date) -> list[str]:
     holder = conn.execute(
         "SELECT slug FROM themes WHERE accepted_on = %s", (session,)
@@ -160,6 +188,7 @@ def _theme_queue_section(conn, session: date) -> list[str]:
            else "**OPEN** (one accepted theme per day, all sources)")
     )
     lines += _scout_outcome_lines(conn, session)
+    lines += _scout_gate_instrument_lines(conn, session)
     # Each candidate renders in full — the description is the decision
     # document, so the briefing must carry enough to accept or reject from.
     for slug, title, source, proposed_on, rolled, description in candidates:
@@ -181,6 +210,17 @@ def _theme_queue_section(conn, session: date) -> list[str]:
     if deferred and deferred[0]:
         lines.append(
             f"- _{deferred[0]} undecided theme(s) deferred — resurface {deferred[1]}_"
+        )
+    pending_terms = [t for (t,) in conn.execute(
+        "SELECT term FROM edgar_term_registry WHERE status = 'PENDING'"
+        " ORDER BY id")]
+    if pending_terms:
+        quoted = ", ".join(f'"{t}"' for t in pending_terms[:5])
+        more = f" (+{len(pending_terms) - 5} more)" if len(pending_terms) > 5 else ""
+        lines.append(
+            f"- _{len(pending_terms)} proposed EDGAR trend term(s) awaiting"
+            f" decision: {quoted}{more} —"
+            f" `uv run python -m ops.approve terms list`_"
         )
     lines.append("")
     lines.append("Decide: `uv run python -m ops.approve theme accept|reject <slug>`"

@@ -100,6 +100,28 @@ def test_report_renders_conviction_on_proposed(conn):
         raise psycopg.Rollback
 
 
+def test_report_renders_reviewer_conviction_and_fallback(conn):
+    """Migration 012: the reviewer's own conviction label and the fallback
+    flag (published after the turn budget without a medium landing) reach
+    the morning briefing."""
+    with conn.transaction():
+        clear_real_outcomes(conn)
+        daily_monitor.record_scout_outcome(
+            conn, SESSION, "PROPOSED", "so-medium", "Strong signal",
+            conviction="medium", review_conviction="medium")
+        text = "\n".join(_scout_outcome_lines(conn, SESSION))
+        assert "Reviewer conviction: **MEDIUM**" in text
+        assert "fallback" not in text
+
+        daily_monitor.record_scout_outcome(
+            conn, SESSION, "PROPOSED", "so-thin", "Quiet-day signal",
+            conviction="low", review_conviction="low", fallback=True)
+        text = "\n".join(_scout_outcome_lines(conn, SESSION))
+        assert "Reviewer conviction: **LOW**" in text
+        assert "published as fallback" in text
+        raise psycopg.Rollback
+
+
 def test_stale_outcome_is_dated(conn):
     with conn.transaction():
         clear_real_outcomes(conn)

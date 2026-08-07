@@ -70,7 +70,7 @@ def mock_context(monkeypatch):
 def approve_review(monkeypatch):
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(approve=True, critique="ok"),
+        lambda *a, **k: review_gate.ConvictionVerdict(approve=True, conviction="medium", critique="ok"),
     )
 
 
@@ -149,8 +149,8 @@ def test_rejected_seed_is_consumed_with_critique(conn, monkeypatch, mock_context
                         lambda _conn, **kw: proposal(slug="is-rejected"))
     monkeypatch.setattr(
         review_gate, "review",
-        lambda *a, **k: review_gate.ReviewVerdict(
-            approve=False, critique="evidence does not support the seed"),
+        lambda *a, **k: review_gate.ConvictionVerdict(
+            approve=False, conviction="low", critique="evidence does not support the seed"),
     )
     with conn.transaction():
         clear_todays_scout_theme(conn)

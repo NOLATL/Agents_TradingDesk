@@ -1,0 +1,28 @@
+# Data contract: USAspending.gov award search (2026-08-07 scale-up P4).
+source_name: usaspending
+description: >
+  Federal contract awards (spending_by_award search) — forced-spending
+  evidence for defense/infrastructure/energy scout themes. Public data,
+  no auth.
+endpoints:
+  - https://api.usaspending.gov/api/v2/search/spending_by_award/   # POST, JSON body
+auth: none (public API; please-identify User-Agent sent)
+
+data_semantics:
+  raw_or_adjusted: raw award records as published (obligated amounts)
+  currency: USD
+  timezone: America/New_York        # federal fiscal reporting
+  session_date_rule: >
+    first_eligible_decision_time = next NYSE session open after ingestion.
+    Award action dates lag publication; the scout uses these as narrative
+    catalyst evidence only, never as a decision input.
+  corporate_action_treatment: not_applicable
+  null_rule: missing fields stay null; rows without an award amount are dropped
+
+caching:
+  invariant_4: >
+    The POST body (filters window, amount floor, limit) is persisted in
+    query_params._post_body; the raw JSON response is stored once by
+    response-content hash and never mutated. The daily window moves, so each
+    day's sweep is its own immutable document; a same-day re-run dedups.
+throttle: one POST per scout context build (nightly + intraday cache hits)

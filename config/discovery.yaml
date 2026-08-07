@@ -26,12 +26,29 @@ rss_feeds:
   # RSS 2.0 at add time; a dead feed parses to zero items, never an error.
   shipping_logistics:
     - https://gcaptain.com/feed/
+    - https://www.freightwaves.com/news/feed
   mining_materials:
     - https://www.mining.com/feed/
   healthcare_pharma:
     - https://www.fiercepharma.com/rss/xml
+    - https://www.fiercebiotech.com/rss/xml
   agriculture:
     - https://modernfarmer.com/feed/          # agweb.com/rss/all 403s behind a bot wall
+  # Added 2026-08-07 (scout scale-up P2): under-covered sectors so the
+  # coverage-balance nudge has somewhere to point. All verified 200 at add
+  # time; a dead feed parses to zero items, never an error. Per-sector
+  # round-robin sampling in build_context keeps chatty feeds from crowding
+  # the rest out of the 60-item window.
+  space:
+    - https://spacenews.com/feed/
+  robotics_automation:
+    - https://www.therobotreport.com/feed/
+  utilities_grid:
+    - https://www.utilitydive.com/feeds/news/
+  construction_infrastructure:
+    - https://www.constructiondive.com/feeds/news/
+  cybersecurity:
+    - https://krebsonsecurity.com/feed/       # bleepingcomputer 403s behind a bot wall
 
 # --- SEC EDGAR full-text search: trend-scan these terms in 10-K/10-Q filings.
 # Rising mention counts across many filers = a theme forming.
@@ -49,8 +66,37 @@ edgar_terms:
   - "strait of hormuz"
   - "reshoring"
 
+# --- USAspending contract-award sweep (2026-08-07 scale-up P4): the largest
+# recent definitive federal contracts render as [Un] scout evidence —
+# forced-spending catalysts for defense/infrastructure/energy themes.
+usaspending:
+  days: 30
+  min_amount_usd: 50000000
+  limit: 12
+
+# --- FRED macro series (2026-08-07 scale-up P2): rendered as [Fn] delta
+# evidence in the nightly scout context (latest vs ~3m and ~12m prior).
+# Slow-moving macro LEVELS, not equity price performance — invariant 5
+# intact. id -> label shown to the model. Ingested nightly alongside the
+# slice/theme series.
+fred_series:
+  INDPRO: "Industrial production index"
+  IPUTIL: "Industrial production: utilities"
+  CAPUTLG2211S: "Capacity utilization: electric utilities"
+  HOUST: "Housing starts"
+  PERMIT: "Building permits"
+  TTLCONS: "Total construction spending"
+  DGORDER: "Durable goods new orders"
+  UMCSENT: "Consumer sentiment (UMich)"
+  RSAFS: "Retail sales"
+  UNRATE: "Unemployment rate"
+  CPIAUCSL: "CPI (all urban consumers)"
+
 # --- Physical-market stress: screen these curves/rates for regime changes
 # (backwardation flips, big week-over-week moves) ---
+# NOT wired into the scout: curve structure is a price signal, barred as
+# scout evidence by invariant 5 (analyst blinding). Operator-only surfacing
+# would need an explicit invariant amendment (flagged 2026-08-07).
 futures_watch: ["CL=F", "NG=F", "HG=F", "GC=F", "SI=F", "ZW=F"]
 
 # --- Human-curated (subscribe yourself; the judgment layer) ---

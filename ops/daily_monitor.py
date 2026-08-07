@@ -49,19 +49,21 @@ def finality_guard(conn, session: date) -> None:
         )
 
 
-def claim_cycle(conn, period_key: str, trigger: str) -> CycleLog | None:
+def claim_cycle(conn, period_key: str, trigger: str,
+                cycle_type: str = "daily") -> CycleLog | None:
     """cycle_log idempotency claim. Returns None if already COMPLETE."""
     row = conn.execute(
         "INSERT INTO cycle_log (cycle_type, period_key, trigger, status, started_at)"
-        " VALUES ('daily', %s, %s, 'RUNNING', %s)"
+        " VALUES (%s, %s, %s, 'RUNNING', %s)"
         " ON CONFLICT (cycle_type, period_key) DO NOTHING RETURNING id",
-        (period_key, trigger, datetime.now(timezone.utc)),
+        (cycle_type, period_key, trigger, datetime.now(timezone.utc)),
     ).fetchone()
     if row is not None:
         conn.commit()
         return repo.fetch_one(conn, CycleLog, "id = %s", (row[0],))
     existing = repo.fetch_one(
-        conn, CycleLog, "cycle_type = 'daily' AND period_key = %s", (period_key,)
+        conn, CycleLog, "cycle_type = %s AND period_key = %s",
+        (cycle_type, period_key),
     )
     if existing.status == "COMPLETE":
         return None
@@ -85,20 +87,25 @@ def finish_cycle(conn, cycle: CycleLog, status: str, phase: str, error: str | No
 def record_scout_outcome(
     conn, session: date, outcome: str,
     slug: str | None = None, title: str | None = None, detail: str | None = None,
-    conviction: str | None = None,
+    conviction: str | None = None, review_conviction: str | None = None,
+    fallback: bool | None = None,
 ) -> None:
     """One transparency row per session (migration 006; conviction added in
-    007). The daily report renders the latest row, so the briefing confirms
-    the scout ran even on nights when review rejects and nothing enters the
-    queue. Upsert: a re-run after a FAILED cycle records its own outcome.
-    Does not commit."""
+    007; reviewer conviction + fallback flag in 012). The daily report
+    renders the latest row, so the briefing confirms the scout ran even on
+    nights when review rejects and nothing enters the queue. Upsert: a
+    re-run after a FAILED cycle records its own outcome. Does not commit."""
     conn.execute(
-        "INSERT INTO scout_outcomes (session_date, outcome, slug, title, detail, conviction)"
-        " VALUES (%s, %s, %s, %s, %s, %s)"
+        "INSERT INTO scout_outcomes (session_date, outcome, slug, title, detail,"
+        " conviction, review_conviction, fallback)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (session_date) DO UPDATE SET outcome = EXCLUDED.outcome,"
         "  slug = EXCLUDED.slug, title = EXCLUDED.title, detail = EXCLUDED.detail,"
-        "  conviction = EXCLUDED.conviction",
-        (session, outcome, slug, title, detail, conviction),
+        "  conviction = EXCLUDED.conviction,"
+        "  review_conviction = EXCLUDED.review_conviction,"
+        "  fallback = EXCLUDED.fallback",
+        (session, outcome, slug, title, detail, conviction, review_conviction,
+         fallback),
     )
 
 
@@ -142,14 +149,22 @@ def intake(conn, session: date) -> None:
         if theme is not None:
             record_scout_outcome(
                 conn, session, "PROPOSED", theme.slug, theme.title,
-                conviction=theme.research_config.get("conviction"))
+                conviction=theme.research_config.get("conviction"),
+                review_conviction=theme.research_config.get("review_conviction"),
+                fallback=theme.research_config.get("published_as_fallback"))
         conn.commit()
         if theme is not None:
             seeded = theme.research_config.get("seeded")
+            review_conviction = theme.research_config.get("review_conviction")
+            conviction_note = (
+                f" Reviewer conviction: {review_conviction.upper()}"
+                + (" (fallback)." if theme.research_config.get(
+                    "published_as_fallback") else ".")
+                if review_conviction else "")
             notify(
                 (f"New candidate theme (from your seed): {theme.slug}"
                  if seeded else f"New candidate theme: {theme.slug}"),
-                f"Scout proposed '{theme.title}'. "
+                f"Scout proposed '{theme.title}'.{conviction_note} "
                 f"Review: uv run python -m ops.approve theme list",
                 priority="default", tags="bulb",
             )
@@ -187,6 +202,29 @@ def intake(conn, session: date) -> None:
             f"{type(e).__name__}: {str(e)[:400]}",
             priority="high", tags="warning",
         )
+
+    # ~Monthly dynamic EDGAR-term proposals (2026-08-07 P4): local Qwen only,
+    # self-throttled inside propose_terms (25-day cooldown). Failure is a
+    # stderr note, never a blocked cycle or a lost proposal night.
+    try:
+        from research import term_scout
+        from schemas.models import Experiment
+        exp = repo.fetch_one(conn, Experiment, "name = 'EXP-001'")
+        if exp is not None:
+            proposed = term_scout.propose_terms(conn, session,
+                                                experiment_id=exp.id)
+            conn.commit()
+            if proposed:
+                notify(
+                    "EDGAR trend-term proposals pending",
+                    f"{proposed} new term(s) proposed for the scout's scan."
+                    " Decide: uv run python -m ops.approve terms list",
+                    priority="default", tags="bulb",
+                )
+    except Exception as e:  # noqa: BLE001 — enrichment, never load-bearing
+        conn.rollback()
+        print(f"term proposer failed (skipped): {type(e).__name__}: {e}",
+              file=sys.stderr)
 
     for thesis in repo.fetch(conn, Thesis, "status = 'ACTIVE' ORDER BY id"):
         if thesis.theme_id is None:

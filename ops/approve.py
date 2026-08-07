@@ -768,6 +768,25 @@ def pin_restatement(conn, symbol: str, rationale: str):
     return aid, resolved, candidate.content_hash, through
 
 
+def decide_term(conn, term: str, status: str, rationale: str | None,
+                commit: bool = True) -> str:
+    """HUMAN decision on a proposed EDGAR trend term (migration 014,
+    2026-08-07). ACCEPTED terms merge into the scout's trend scan; REJECTED
+    terms are barred from re-proposal. Terminal either way."""
+    term = " ".join(term.lower().split())
+    row = conn.execute(
+        "UPDATE edgar_term_registry SET status = %s, decided_on = %s,"
+        " decided_rationale = %s WHERE term = %s AND status = 'PENDING'"
+        " RETURNING term",
+        (status, today_et(), rationale, term),
+    ).fetchone()
+    if row is None:
+        raise ThemeGateError(f"no PENDING term proposal {term!r}")
+    if commit:
+        conn.commit()
+    return row[0]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ops.approve", description=__doc__)
     parser.add_argument("--list", action="store_true", help="read-only order view")
@@ -816,6 +835,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p = idea.add_parser("drop", help="cancel a pending seed")
     p.add_argument("seed_id", type=int)
     p.add_argument("--rationale", required=True)
+
+    terms = sub.add_parser(
+        "terms", help="dynamic EDGAR trend-term proposals (migration 014)"
+    ).add_subparsers(dest="terms_command", required=True)
+    terms.add_parser("list", help="pending proposals + recent decisions")
+    p = terms.add_parser("accept", help="add the term to the scout's trend scan")
+    p.add_argument("term")
+    p.add_argument("--rationale", default=None)
+    p = terms.add_parser("reject", help="bar the term (terminal; never re-proposed)")
+    p.add_argument("term")
+    p.add_argument("--rationale", default=None)
 
     thesis = sub.add_parser("thesis", help="deep-dive thesis decisions").add_subparsers(
         dest="thesis_command", required=True
@@ -924,6 +954,33 @@ def main(argv: list[str] | None = None) -> None:
                     except ValueError as e:
                         raise ThemeGateError(str(e)) from e
                     print(f"CANCELLED seed #{args.seed_id}")
+            elif args.command == "terms":
+                if args.terms_command == "list":
+                    rows = conn.execute(
+                        "SELECT term, status, rationale, proposed_on, decided_on"
+                        " FROM edgar_term_registry"
+                        " ORDER BY (status <> 'PENDING'), id DESC LIMIT 30"
+                    ).fetchall()
+                    if not rows:
+                        print("no term proposals")
+                    for term, status, rationale, proposed, decided in rows:
+                        line = f"  [{status}] \"{term}\" (proposed {proposed})"
+                        if decided:
+                            line += f" decided {decided}"
+                        if rationale:
+                            line += f" — {rationale[:100]}"
+                        print(line)
+                else:
+                    decided = decide_term(
+                        conn, args.term,
+                        "ACCEPTED" if args.terms_command == "accept" else "REJECTED",
+                        args.rationale)
+                    if args.terms_command == "accept":
+                        print(f"ACCEPTED \"{decided}\" — joins the scout's"
+                              f" EDGAR trend scan tonight")
+                    else:
+                        print(f"REJECTED \"{decided}\" — barred from"
+                              f" re-proposal")
             elif args.command == "thesis":
                 if args.thesis_command == "accept":
                     orders = accept_thesis(conn, args.thesis_id, args.rationale)
