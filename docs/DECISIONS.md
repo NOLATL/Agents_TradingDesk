@@ -887,6 +887,27 @@ block until ~08-21).
    block → drop to 2 batches/day.
 5. **Friday congestion**: daily monitor + weekly deep dives + a possible
    6-turn scout share the GPU 22:45-00:30; stagger before optimizing.
+6. **Human-rejection bar scope** (Jared's concern, 2026-08-07; wait-and-see
+   ruling — no change during the evaluation window). Mechanics today: a
+   human `theme reject` hard-bars only the exact SLUG (scout errors on
+   reuse); the soft bar is the theme FAMILY — "same industry exposure AND
+   same causal arc" per the scout/gate/review prompts — so rejecting one
+   drone proposal does NOT bar the drone domain (proof: three distinct
+   shipping themes coexisted in the queue). Two soft-edge problems anyway:
+   (a) ASYMMETRY — Sonnet-rejected proposals carry an explicit "unless you
+   cite materially NEW evidence" escape, but human-rejected themes render
+   in EXISTING THEMES under a flat "do NOT re-propose", with no escape —
+   backwards, since Jared's rejects are often "not now/not this framing";
+   (b) CHILLING EFFECT — CLOSED themes (22 and growing) render identically
+   to live coverage with no status/date and never expire, so the scout
+   probabilistically over-avoids any domain with accumulated rejections.
+   **Proposed fix (~20 min, ship at/after the readout):** render closed
+   themes in their own labeled subsection — "PREVIOUSLY REJECTED THEMES
+   (closed <date>)" — carrying the same materially-new-evidence escape
+   clause, leaving only genuinely HELD themes under the hard do-not-overlap
+   instruction (`existing_coverage`/`build_context` + test updates).
+   Interim escape hatch if a rejected family deserves a re-look sooner:
+   `ops.approve idea add` seeds it explicitly through drafting + review.
 
 **Next-build candidate (Jared's favorite, build first if the readout is
 healthy): human decision-history feedback loop** — a scout context block
