@@ -1,0 +1,11 @@
+[Unit]
+Description=Schwab pre-fetch Fri 22:45 ET (same-day fundamentals for the 23:45 deep dives)
+
+[Timer]
+OnCalendar=Fri *-*-* 22:45:00 America/New_York
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
+# ln -sf ~/projects/Agents_TradingDesk/ops/trading-desk-schwab-prefetch.{service,timer} ~/.config/systemd/user/

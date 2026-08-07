@@ -227,6 +227,111 @@ def _mermaid_xychart(title: str, labels: list[str], series: list[tuple[str, str,
     return out
 
 
+def _market_context_lines(conn, b) -> list[str]:
+    """Deterministic reviewer-domain market context (Phase C, DECISIONS.md
+    2026-07-30): vol regime + per-symbol valuation/positioning snapshots
+    from the newest cached Schwab documents, computed at render time. No
+    LLM touches this section; nothing here enters analyst context, basket
+    construction, or any assertion table (invariant 5). Best-effort: dark
+    or absent data renders a one-line note, never fails the render."""
+    from config.loader import CONFIG
+
+    if not CONFIG.get("schwab", {}).get("enabled"):
+        return []
+    lines = ["", "## Market context (reviewer-domain — quarantined)", "",
+             "*Deterministic render-time snapshot from cached Schwab"
+             " documents (`quarantined_from_analyst`). Never analyst input,"
+             " never a decision input — invariant 5. No LLM touches this"
+             " section.*", ""]
+    try:
+        from decimal import Decimal
+
+        from analytics.market_context import days_to_cover_flag, valuation_snapshot
+        from analytics.regime import level_percentile, vol_regime
+        from data.adapters import schwab
+
+        cfg = CONFIG["schwab"]
+        symbols = sorted((b.theme.research_config or {}).get("symbols", [])
+                         if b.theme else [])
+        quotes, quotes_tag = schwab.latest_quotes(conn, kind="theme")
+        tape, _ = schwab.latest_quotes(conn, kind="tape")
+        funds, funds_tag = schwab.latest_fundamentals(conn)
+
+        vix_symbol = cfg.get("vix_history", {}).get("symbol", "$VIX")
+        vix = tape.get(vix_symbol)
+        if vix and vix.last is not None:
+            history = [c.close for c in schwab.latest_index_history(conn, vix_symbol)]
+            pct = level_percentile(vix.last, history)
+            bands = [(label, Decimal(str(v)))
+                     for label, v in cfg.get("regime_bands", [])]
+            regime = vol_regime(pct, bands)
+            pct_txt = (f", {float(pct) * 100:.0f}th percentile vs 10y"
+                       if pct is not None else "")
+            lines.append(f"Vol regime: VIX {float(vix.last):.2f}{pct_txt}"
+                         + (f" — **{regime}**." if regime else "."))
+            lines.append("")
+
+        rows = []
+        peer_pes = [f.pe for f in funds.values()
+                    if f.pe is not None and f.symbol in symbols]
+        dtc_threshold = Decimal(str(cfg.get("crowding", {})
+                                    .get("days_to_cover_flag", "8")))
+        for symbol in symbols:
+            f, q = funds.get(symbol), quotes.get(symbol)
+            if f is None and q is None:
+                continue
+            snap = valuation_snapshot(
+                symbol,
+                vendor_pe=f.pe if f else None, pb=f.pb if f else None,
+                peg=f.peg if f else None, div_yield=f.div_yield if f else None,
+                market_cap=f.market_cap if f else None,
+                beta=f.beta if f else None,
+                short_int_pct_float=f.short_int_pct_float if f else None,
+                short_int_days_to_cover=f.short_int_days_to_cover if f else None,
+                last=q.last if q else None,
+                lo52=(q.low_52wk if q and q.low_52wk is not None
+                      else (f.low_52wk if f else None)),
+                hi52=(q.high_52wk if q and q.high_52wk is not None
+                      else (f.high_52wk if f else None)),
+                eps_ttm=f.eps_ttm if f else None,
+                peer_pes=peer_pes,
+                crosscheck_tolerance=Decimal(str(
+                    cfg.get("fundamentals", {})
+                    .get("pe_crosscheck_tolerance_pct", "5"))) / 100,
+            )
+            rows.append(snap)
+        if rows:
+            lines += ["| Symbol | P/E | vs peers | PEG | Div yld | Beta"
+                      " | 52wk pos | Short int | Days-to-cover |",
+                      "|---|---|---|---|---|---|---|---|---|"]
+            fmt = lambda v, spec="{:.1f}": "—" if v is None else spec.format(float(v))  # noqa: E731
+            for s in rows:
+                dtc = fmt(s.short_int_days_to_cover)
+                if days_to_cover_flag(s.short_int_days_to_cover, dtc_threshold):
+                    dtc = f"**{dtc}** ⚠"
+                lines.append(
+                    f"| {s.symbol} | {fmt(s.pe)}"
+                    f" | {fmt(s.pe_pctile_vs_peers, '{:.0%}') if s.pe_pctile_vs_peers is not None else '—'}"
+                    f" | {fmt(s.peg, '{:.2f}')} | {fmt(s.div_yield, '{:.2f}')}%"
+                    f" | {fmt(s.beta, '{:.2f}')}"
+                    f" | {fmt(s.range_position_52wk, '{:.0%}') if s.range_position_52wk is not None else '—'}"
+                    f" | {fmt(s.short_int_pct_float, '{:.1f}')}% | {dtc} |")
+            notes = [s.pe_crosscheck_note for s in rows if s.pe_crosscheck_note]
+            for note in notes:
+                lines.append(f"- ⚠ {note}")
+            lines.append("")
+            lines.append(f"*Fundamentals as of batch {funds_tag or 'n/a'};"
+                         f" quotes as of batch {quotes_tag or 'n/a'}"
+                         " (Friday 22:45 ET pre-fetch when live).*")
+        else:
+            lines.append("*No cached Schwab fundamentals/quotes for the"
+                         " theme symbols yet.*")
+        return lines
+    except Exception as e:  # noqa: BLE001 — context must never fail the render
+        return lines + [f"*Market context unavailable:"
+                        f" {type(e).__name__}: {str(e)[:120]}*"]
+
+
 def _macro_series(macro: list[Assertion]) -> dict[str, list[Assertion]]:
     series: dict[str, list[Assertion]] = {}
     for a in macro:
@@ -378,6 +483,9 @@ def render(conn, thesis: Thesis, week_key: str, packet_doc_id: int | None) -> st
                     f"{sid} (last {len(pts)} observations)",
                     [d[5:7] + "/" + d[2:4] for d, _ in pts],
                     [("line", sid, [float(v) for _, v in pts])]))
+
+    # 4b — market context (reviewer-domain, deterministic, quarantined)
+    lines.extend(_market_context_lines(conn, b))
 
     # 5 — exposure scoreboard
     add("")

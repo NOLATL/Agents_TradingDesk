@@ -366,6 +366,37 @@ def _single_name_phase(conn, session: date, horizons):
         return (), None, f"internals failed: {type(e).__name__}: {str(e)[:150]}", (), None
 
 
+def _friday_schwab_extras(conn, session: date) -> str | None:
+    """Friday-session (Saturday 00:30) refresh of the full-universe
+    fundamentals + theme quotes — the weekly base the Phase C deep-dive
+    context and Phase D crowding read between Friday pre-fetches.
+    Best-effort; returns a gap note on failure."""
+    from data.adapters import schwab
+    from data.adapters.schwab_auth import SchwabDark
+
+    if session.weekday() != 4 or not CONFIG.get("schwab", {}).get("enabled"):
+        return None
+    try:
+        constituents = sorted(wikipedia.sector_map(conn))
+        theme_symbols = sorted(
+            r[0] for r in conn.execute("SELECT DISTINCT symbol FROM theme_symbols"))
+        schwab.ingest_quotes(conn, theme_symbols, session_tag=str(session),
+                             kind="theme")
+        conn.commit()
+        docs = schwab.ingest_fundamentals(
+            conn, sorted(set(constituents) | set(theme_symbols)),
+            session_tag=str(session))
+        print(f"friday extras: fundamentals batch of"
+              f" {len(set(constituents) | set(theme_symbols))} symbols"
+              f" ({len(docs)} documents)")
+        return None
+    except SchwabDark as e:
+        return f"friday fundamentals skipped (Schwab dark: {e})"
+    except Exception as e:  # noqa: BLE001 — extras must not cost the scan
+        conn.rollback()
+        return f"friday fundamentals failed: {type(e).__name__}: {str(e)[:120]}"
+
+
 def _macro_phase(conn, session: date, index_row):
     """Schwab macro tape: index/futures/forex quotes, VIX percentile +
     regime, movers, risk-on/off composite. Best-effort; returns
@@ -535,6 +566,11 @@ def main(as_of_override: str | None = None) -> None:
             phase = "singles"
             internals, index_row, internals_note, referee_notes, dark_note = (
                 _single_name_phase(conn, session, horizons))
+
+            phase = "friday_extras"
+            extras_note = _friday_schwab_extras(conn, session)
+            if extras_note:
+                gaps.append(("schwab_fundamentals", extras_note))
 
             phase = "macro"
             macro, macro_dark = _macro_phase(conn, session, index_row)

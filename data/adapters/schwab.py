@@ -273,6 +273,98 @@ def latest_quotes(conn, *, kind: str) -> tuple[dict[str, QuoteSnap], str | None]
     return parse_quotes(newest), (newest.query_params or {}).get("scan_session")
 
 
+@dataclass(frozen=True)
+class FundamentalsSnap:
+    symbol: str
+    pe: Decimal | None
+    pb: Decimal | None
+    peg: Decimal | None
+    div_yield: Decimal | None
+    eps_ttm: Decimal | None
+    market_cap: Decimal | None
+    beta: Decimal | None
+    short_int_pct_float: Decimal | None
+    short_int_days_to_cover: Decimal | None
+    high_52wk: Decimal | None
+    low_52wk: Decimal | None
+
+
+def ingest_fundamentals(conn, symbols: list[str], *, session_tag: str,
+                        chunk_size: int = 50) -> list[tuple[Document, bool]]:
+    """instruments?projection=fundamental. Batch-ability is unconfirmed on
+    the vendor side: chunks are tried batched and fall back to per-symbol
+    on HTTP 400 (per-symbol at 120/min is fine for Friday volumes)."""
+    import httpx
+
+    docs: list[tuple[Document, bool]] = []
+    ordered = sorted(set(s.upper() for s in symbols))
+    for i in range(0, len(ordered), chunk_size):
+        chunk = ordered[i:i + chunk_size]
+        try:
+            docs.append(_fetch(
+                conn, url=f"{BASE}/instruments",
+                params={"symbol": ",".join(chunk), "projection": "fundamental"},
+                source_name="schwab_fundamentals",
+                extra_stored={"scan_session": session_tag}))
+            conn.commit()
+        except httpx.HTTPStatusError as e:
+            conn.rollback()
+            if e.response.status_code != 400 or len(chunk) == 1:
+                raise
+            for symbol in chunk:  # batch rejected → per-symbol fallback
+                docs.append(_fetch(
+                    conn, url=f"{BASE}/instruments",
+                    params={"symbol": symbol, "projection": "fundamental"},
+                    source_name="schwab_fundamentals",
+                    extra_stored={"scan_session": session_tag}))
+                conn.commit()
+                time.sleep(0.5)  # 120/min cap with headroom
+    return docs
+
+
+def parse_fundamentals(doc: Document) -> dict[str, FundamentalsSnap]:
+    payload = json.loads(doc.raw_bytes)
+    out: dict[str, FundamentalsSnap] = {}
+    for inst in payload.get("instruments") or []:
+        fund = inst.get("fundamental") or {}
+        symbol = str(inst.get("symbol") or fund.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        out[symbol] = FundamentalsSnap(
+            symbol=symbol,
+            pe=_dec(fund.get("peRatio")),
+            pb=_dec(fund.get("pbRatio")),
+            peg=_dec(fund.get("pegRatio")),
+            div_yield=_dec(fund.get("dividendYield")),
+            eps_ttm=_dec(fund.get("epsTTM")),
+            market_cap=_dec(fund.get("marketCap")),
+            beta=_dec(fund.get("beta")),
+            # Schwab feeds ZEROS for the shortInt* fields (verified live
+            # 2026-08-07 — schema stubs, not data). 0 → None: a true 0.0%
+            # short interest doesn't exist; render absence, never fake zeros.
+            short_int_pct_float=_dec(fund.get("shortIntToFloat")) or None,
+            short_int_days_to_cover=_dec(fund.get("shortIntDayToCover")) or None,
+            high_52wk=_dec(fund.get("high52")),
+            low_52wk=_dec(fund.get("low52")),
+        )
+    return out
+
+
+def latest_fundamentals(conn) -> tuple[dict[str, FundamentalsSnap], str | None]:
+    """Merged snaps from the newest fundamentals batch (max scan_session)."""
+    docs = repo.fetch(
+        conn, Document,
+        "source_name = 'schwab_fundamentals' AND query_params ? 'scan_session'")
+    if not docs:
+        return {}, None
+    newest = max(d.query_params["scan_session"] for d in docs)
+    merged: dict[str, FundamentalsSnap] = {}
+    for d in docs:
+        if d.query_params.get("scan_session") == newest:
+            merged.update(parse_fundamentals(d))
+    return merged, newest
+
+
 def ingest_movers(conn, index: str, *, sort: str, session_tag: str) -> tuple[Document, bool]:
     params = {"sort": sort}
     return _fetch(conn, url=f"{BASE}/movers/{index}", params=params,

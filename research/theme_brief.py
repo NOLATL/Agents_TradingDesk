@@ -58,6 +58,41 @@ def _price_context(conn, symbols: list[str], session: date) -> str:
     return "\n".join(lines) or "(no price history)"
 
 
+def _market_context(conn, symbols: list[str]) -> str:
+    """Per-symbol valuation/positioning lines from the newest cached Schwab
+    snapshots (Phase C research-layer enrichment, DECISIONS.md 2026-08-07 —
+    a tracked research-layer switch; price context is already permitted in
+    post-acceptance briefs). Best-effort: absent data → placeholder line."""
+    try:
+        from config.loader import CONFIG
+        from data.adapters import schwab
+
+        if not CONFIG.get("schwab", {}).get("enabled"):
+            return "(schwab disabled)"
+        funds, _ = schwab.latest_fundamentals(conn)
+        quotes, _ = schwab.latest_quotes(conn, kind="theme")
+        lines = []
+        for symbol in symbols:
+            f, q = funds.get(symbol), quotes.get(symbol)
+            if f is None and q is None:
+                continue
+            bits = []
+            if f and f.pe is not None:
+                bits.append(f"PE {float(f.pe):.1f}")
+            if f and f.div_yield is not None:
+                bits.append(f"div yield {float(f.div_yield):.2f}%")
+            if f and f.short_int_pct_float is not None:
+                bits.append(f"short interest {float(f.short_int_pct_float):.1f}% of float")
+            if q and q.last is not None and q.low_52wk and q.high_52wk and q.high_52wk > q.low_52wk:
+                pos = (q.last - q.low_52wk) / (q.high_52wk - q.low_52wk)
+                bits.append(f"{float(pos) * 100:.0f}% of 52wk range")
+            if bits:
+                lines.append(f"{symbol}: " + ", ".join(bits))
+        return "\n".join(lines) or "(no cached snapshots yet)"
+    except Exception as e:  # noqa: BLE001 — enrichment must not cost the brief
+        return f"(market context unavailable: {type(e).__name__})"
+
+
 def write_brief(conn, theme: Theme, thesis: Thesis, session: date) -> Path:
     exp = repo.fetch_one(conn, Experiment, "name = 'EXP-001'")
     symbols = theme.research_config.get("symbols", [])
@@ -65,6 +100,8 @@ def write_brief(conn, theme: Theme, thesis: Thesis, session: date) -> Path:
         f"THEME: {theme.title}\n\n"
         f"ACTIVE THESIS CAUSAL CHAIN:\n{thesis.causal_chain}\n\n"
         f"PRICE CONTEXT (last month):\n{_price_context(conn, symbols, session)}\n\n"
+        f"MARKET CONTEXT (valuation/positioning snapshots):\n"
+        f"{_market_context(conn, symbols)}\n\n"
         f"RECENT HEADLINES (72h):\n"
         + ("\n".join(f"- {h}" for h in rss.recent_headlines(conn, hours=72)[:25]) or "(none)")
     )

@@ -149,3 +149,20 @@ def test_parse_movers_tolerates_shape_variance():
     assert [m.symbol for m in movers] == ["AAA", "BBB", ""]
     assert movers[0].net_pct_change == D("4.2")
     assert movers[1].volume == 5
+
+
+def test_parse_fundamentals_extracts_snap():
+    payload = {"instruments": [
+        {"symbol": "ETN", "fundamental": {
+            "peRatio": 30.2, "pbRatio": 5.1, "pegRatio": 2.2,
+            "dividendYield": 1.15, "epsTTM": 10.4, "marketCap": 123000.0,
+            "beta": 1.05, "shortIntToFloat": 1.4, "shortIntDayToCover": 2.2,
+            "high52": 380.0, "low52": 250.5}},
+        {"fundamental": {"symbol": "GEV", "peRatio": 55.0}},
+        {"bogus": 1},
+    ]}
+    snaps = schwab.parse_fundamentals(doc(payload, "fund", "schwab_fundamentals"))
+    assert set(snaps) == {"ETN", "GEV"}
+    assert snaps["ETN"].short_int_pct_float == D("1.4")
+    assert snaps["ETN"].low_52wk == D("250.5")
+    assert snaps["GEV"].pe == D("55.0") and snaps["GEV"].beta is None
