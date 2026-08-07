@@ -166,3 +166,43 @@ def test_parse_fundamentals_extracts_snap():
     assert snaps["ETN"].short_int_pct_float == D("1.4")
     assert snaps["ETN"].low_52wk == D("250.5")
     assert snaps["GEV"].pe == D("55.0") and snaps["GEV"].beta is None
+
+
+def test_parse_fundamentals_panel_fields_and_zero_stubs():
+    """Panel fields parse; vendor zero-stubs map to absence (the shortInt
+    precedent), and vendor timestamps reduce to ISO dates."""
+    payload = {"instruments": [{"symbol": "WEC", "fundamental": {
+        "peRatio": 20.9, "prRatio": 3.74474, "pcfRatio": 9.47515,
+        "bookValuePerShare": 43.37863, "grossMarginTTM": 41.9091,
+        "operatingMarginTTM": 16.6995, "netProfitMarginTTM": 16.6857,
+        "returnOnEquity": 11.988, "returnOnAssets": 3.0202,
+        "returnOnInvestment": 3.53433, "currentRatio": 0.5341,
+        "quickRatio": 0.3032, "ltDebtToEquity": 157.9853,
+        "totalDebtToEquity": 135.014, "revChangeTTM": 8.9258,
+        "revChangeYear": 13.9559, "epsChangePercentTTM": -0.4111,
+        "dividendAmount": 3.81, "dividendPayAmount": 0.9525,
+        "dividendFreq": 4, "nextDividendDate": "2026-11-16 00:00:00.0",
+        "nextDividendPayDate": "2026-12-01 00:00:00.0",
+        "sharesOutstanding": 325849383.0, "avg3MonthVolume": 2048771,
+        # vendor zero-stubs → absence, never fake zeros
+        "quickRatio2": 0, "interestCoverage": 0, "divGrowthRate3Year": 0,
+    }}]}
+    s = schwab.parse_fundamentals(doc(payload, "fund", "schwab_fundamentals"))["WEC"]
+    assert s.ps == D("3.74474") and s.pcf == D("9.47515")
+    assert s.gross_margin_ttm == D("41.9091") and s.roe == D("11.988")
+    assert s.lt_debt_to_equity == D("157.9853")
+    assert s.rev_change_ttm == D("8.9258")
+    assert s.eps_change_ttm == D("-0.4111")      # negatives survive 0-is-absent
+    assert s.div_amount == D("3.81") and s.div_freq == 4
+    assert s.next_div_ex_date == "2026-11-16"
+    assert s.next_div_pay_date == "2026-12-01"
+    assert s.shares_outstanding == D("325849383.0")
+
+    stub = {"instruments": [{"symbol": "ZRO", "fundamental": {
+        "peRatio": 10.0, "grossMarginTTM": 0.0, "currentRatio": 0,
+        "dividendAmount": 0.0, "dividendFreq": 0, "nextDividendDate": "",
+    }}]}
+    z = schwab.parse_fundamentals(doc(stub, "fund2", "schwab_fundamentals"))["ZRO"]
+    assert z.gross_margin_ttm is None and z.current_ratio is None
+    assert z.div_amount is None and z.div_freq is None
+    assert z.next_div_ex_date is None

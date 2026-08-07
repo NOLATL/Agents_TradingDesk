@@ -20,6 +20,7 @@ from analytics.valuation import pe_ratio, percentile_rank
 __all__ = [
     "QUARANTINE_KEY", "ValuationSnapshot", "range_position",
     "valuation_snapshot", "short_interest_crowding", "days_to_cover_flag",
+    "payout_ratio", "period_return", "max_drawdown", "market_warnings",
 ]
 
 
@@ -115,6 +116,88 @@ def days_to_cover_flag(days_to_cover: Decimal | None, threshold: Decimal) -> boo
     """True when a squeeze-relevant days-to-cover breaches the config
     threshold."""
     return days_to_cover is not None and days_to_cover >= threshold
+
+
+# --------------------------------------------------------------------------- #
+# Panels (2026-08-07) — dividend coverage, returns/risk windows, and the
+# StockRover-style deterministic warning rules. All PYTHON CALCS over
+# vendor DIRECT EXTRACTS; still reviewer-domain, still quarantined.
+# --------------------------------------------------------------------------- #
+
+def payout_ratio(div_amount: Decimal | None,
+                 eps_ttm: Decimal | None) -> Decimal | None:
+    """Forward annual dividend / trailing EPS, as percent points. None when
+    either side is missing or EPS is non-positive (a loss-maker's payout
+    ratio is not a number, it's a warning elsewhere)."""
+    if div_amount is None or eps_ttm is None or eps_ttm <= 0:
+        return None
+    return div_amount / eps_ttm * 100
+
+
+def period_return(closes: Sequence[Decimal], sessions: int) -> Decimal | None:
+    """Simple return over the trailing `sessions` window of an ascending
+    close series; None when the series can't cover the window."""
+    if sessions <= 0 or len(closes) <= sessions:
+        return None
+    base = closes[-1 - sessions]
+    if base <= 0:
+        return None
+    return closes[-1] / base - 1
+
+
+def max_drawdown(closes: Sequence[Decimal]) -> Decimal | None:
+    """Worst peak-to-trough decline over the series (negative fraction,
+    0 for a monotonic rise). None below two observations."""
+    if len(closes) < 2:
+        return None
+    peak = closes[0]
+    worst = Decimal(0)
+    for c in closes:
+        peak = max(peak, c)
+        if peak > 0:
+            worst = min(worst, c / peak - 1)
+    return worst
+
+
+def market_warnings(
+    *,
+    rev_change_ttm: Decimal | None,
+    rev_change_year: Decimal | None,
+    eps_change_ttm: Decimal | None,
+    eps_ttm: Decimal | None,
+    payout: Decimal | None,
+    pe_pctile_vs_peers: Decimal | None,
+    range_position_52wk: Decimal | None,
+    days_to_cover: Decimal | None,
+    days_to_cover_threshold: Decimal,
+) -> list[str]:
+    """Deterministic per-symbol flags, StockRover-warnings style: each rule
+    is a pure threshold on vendor extracts / computed values, rendered as a
+    short sentence WITH its numbers (the reader audits the rule, not us).
+    Absent inputs simply don't fire — absence, not repair."""
+    flags: list[str] = []
+    if rev_change_ttm is not None and rev_change_ttm < 0:
+        flags.append(f"Declining sales — revenue {rev_change_ttm:.1f}% TTM")
+    elif (rev_change_ttm is not None and rev_change_year is not None
+          and rev_change_ttm < rev_change_year):
+        flags.append(f"Decelerating sales — TTM {rev_change_ttm:.1f}%"
+                     f" < prior year {rev_change_year:.1f}%")
+    if eps_change_ttm is not None and eps_change_ttm < 0:
+        flags.append(f"Declining EPS — {eps_change_ttm:.1f}% TTM")
+    if eps_ttm is not None and eps_ttm <= 0:
+        flags.append(f"Negative trailing EPS ({eps_ttm:.2f})")
+    if payout is not None and payout >= 90:
+        flags.append(f"Stretched payout — dividend is {payout:.0f}% of EPS")
+    if pe_pctile_vs_peers is not None and pe_pctile_vs_peers >= Decimal("0.9"):
+        flags.append(f"P/E in the top decile of peers"
+                     f" ({float(pe_pctile_vs_peers):.0%})")
+    if range_position_52wk is not None and range_position_52wk <= Decimal("0.1"):
+        flags.append(f"Near 52-week low"
+                     f" ({float(range_position_52wk):.0%} of range)")
+    if days_to_cover_flag(days_to_cover, days_to_cover_threshold):
+        flags.append(f"Days-to-cover {days_to_cover:.1f}"
+                     f" ≥ {days_to_cover_threshold} (squeeze-relevant)")
+    return flags
 
 
 # --------------------------------------------------------------------------- #

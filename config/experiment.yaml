@@ -258,3 +258,10 @@ schwab:
     days_to_cover_flag: "8"                 # NOTE: Schwab shortInt* fields are vendor zeros
                                             # (2026-08-07) — crowding abstains until a real
                                             # SI source (e.g. FINRA files) is added
+
+reporting:
+  deepdive_html:                            # 2026-08-07: HTML companion for weekly deep dives
+    enabled: true                           # vault MD stays the artifact of record
+    out_dir: ""                             # default reporting/output/deepdive-html (tailscale-served)
+    url_base: "https://framework.taila4cc29.ts.net/desk-reports"
+    # ntfy push (tap-to-open) fires from deepdive.write when a URL renders

@@ -12,6 +12,7 @@
 """
 
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -287,6 +288,31 @@ class FundamentalsSnap:
     short_int_days_to_cover: Decimal | None
     high_52wk: Decimal | None
     low_52wk: Decimal | None
+    # Panel fields (2026-08-07): always present in the cached payloads,
+    # parsed late — derive-on-read means old documents light up too.
+    ps: Decimal | None = None                   # prRatio (price/revenue)
+    pcf: Decimal | None = None                  # pcfRatio (price/cash flow)
+    book_value_per_share: Decimal | None = None
+    gross_margin_ttm: Decimal | None = None     # percent points
+    operating_margin_ttm: Decimal | None = None
+    net_margin_ttm: Decimal | None = None
+    roe: Decimal | None = None                  # percent points
+    roa: Decimal | None = None
+    roi: Decimal | None = None
+    current_ratio: Decimal | None = None
+    quick_ratio: Decimal | None = None
+    lt_debt_to_equity: Decimal | None = None    # vendor percent (135 = 1.35x)
+    total_debt_to_equity: Decimal | None = None
+    rev_change_ttm: Decimal | None = None       # percent points YoY
+    rev_change_year: Decimal | None = None
+    eps_change_ttm: Decimal | None = None
+    div_amount: Decimal | None = None           # forward annual $/share
+    div_pay_amount: Decimal | None = None       # per-payment $/share
+    div_freq: int | None = None                 # payments per year
+    next_div_ex_date: str | None = None         # ISO date
+    next_div_pay_date: str | None = None
+    shares_outstanding: Decimal | None = None
+    avg_vol_3mo: Decimal | None = None
 
 
 def ingest_fundamentals(conn, symbols: list[str], *, session_tag: str,
@@ -342,12 +368,47 @@ def parse_fundamentals(doc: Document) -> dict[str, FundamentalsSnap]:
             # Schwab feeds ZEROS for the shortInt* fields (verified live
             # 2026-08-07 — schema stubs, not data). 0 → None: a true 0.0%
             # short interest doesn't exist; render absence, never fake zeros.
+            # The same 0-is-absent rule applies to every panel field below:
+            # exact 0.0 on a margin/ratio/dividend is the vendor's "no data"
+            # (interestCoverage, divGrowthRate3Year, epsChangeYear are
+            # all-zero stubs and deliberately not parsed at all).
             short_int_pct_float=_dec(fund.get("shortIntToFloat")) or None,
             short_int_days_to_cover=_dec(fund.get("shortIntDayToCover")) or None,
             high_52wk=_dec(fund.get("high52")),
             low_52wk=_dec(fund.get("low52")),
+            ps=_dec(fund.get("prRatio")) or None,
+            pcf=_dec(fund.get("pcfRatio")) or None,
+            book_value_per_share=_dec(fund.get("bookValuePerShare")) or None,
+            gross_margin_ttm=_dec(fund.get("grossMarginTTM")) or None,
+            operating_margin_ttm=_dec(fund.get("operatingMarginTTM")) or None,
+            net_margin_ttm=_dec(fund.get("netProfitMarginTTM")) or None,
+            roe=_dec(fund.get("returnOnEquity")) or None,
+            roa=_dec(fund.get("returnOnAssets")) or None,
+            roi=_dec(fund.get("returnOnInvestment")) or None,
+            current_ratio=_dec(fund.get("currentRatio")) or None,
+            quick_ratio=_dec(fund.get("quickRatio")) or None,
+            lt_debt_to_equity=_dec(fund.get("ltDebtToEquity")) or None,
+            total_debt_to_equity=_dec(fund.get("totalDebtToEquity")) or None,
+            rev_change_ttm=_dec(fund.get("revChangeTTM")) or None,
+            rev_change_year=_dec(fund.get("revChangeYear")) or None,
+            eps_change_ttm=_dec(fund.get("epsChangePercentTTM")) or None,
+            div_amount=_dec(fund.get("dividendAmount")) or None,
+            div_pay_amount=_dec(fund.get("dividendPayAmount")) or None,
+            div_freq=int(fund["dividendFreq"]) if fund.get("dividendFreq") else None,
+            next_div_ex_date=_vendor_date(fund.get("nextDividendDate")),
+            next_div_pay_date=_vendor_date(fund.get("nextDividendPayDate")),
+            shares_outstanding=_dec(fund.get("sharesOutstanding")) or None,
+            avg_vol_3mo=_dec(fund.get("avg3MonthVolume")) or None,
         )
     return out
+
+
+def _vendor_date(value) -> str | None:
+    """'2026-08-14 00:00:00.0' → '2026-08-14'; anything malformed → None."""
+    if not value:
+        return None
+    head = str(value)[:10]
+    return head if re.fullmatch(r"\d{4}-\d{2}-\d{2}", head) else None
 
 
 def latest_fundamentals(conn) -> tuple[dict[str, FundamentalsSnap], str | None]:
@@ -363,6 +424,29 @@ def latest_fundamentals(conn) -> tuple[dict[str, FundamentalsSnap], str | None]:
         if d.query_params.get("scan_session") == newest:
             merged.update(parse_fundamentals(d))
     return merged, newest
+
+
+def universe_fundamentals(conn, *, min_symbols: int = 300,
+                          ) -> tuple[dict[str, FundamentalsSnap], str | None]:
+    """Newest fundamentals batch with FULL-UNIVERSE coverage (the Saturday
+    scan's ~503-name sweep), for cross-sectional percentiles. The Friday
+    22:45 prefetch batch is theme-scoped and newer, so `latest_fundamentals`
+    alone would shrink the peer set to a handful of names right when the
+    deep dives render — this walks batches newest-first until one is broad
+    enough. Pure derive-on-read."""
+    docs = repo.fetch(
+        conn, Document,
+        "source_name = 'schwab_fundamentals' AND query_params ? 'scan_session'")
+    by_session: dict[str, list[Document]] = {}
+    for d in docs:
+        by_session.setdefault(d.query_params["scan_session"], []).append(d)
+    for session in sorted(by_session, reverse=True):
+        merged: dict[str, FundamentalsSnap] = {}
+        for d in by_session[session]:
+            merged.update(parse_fundamentals(d))
+        if len(merged) >= min_symbols:
+            return merged, session
+    return {}, None
 
 
 def ingest_movers(conn, index: str, *, sort: str, session_tag: str) -> tuple[Document, bool]:

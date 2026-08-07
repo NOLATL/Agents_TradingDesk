@@ -761,6 +761,55 @@ Phases C and D of the two-vendor plan, built the day Schwab went live.
   FAILED banner path, failure notifies + is re-runnable by hand; kept
   entirely outside ops/weekly_cycle.py (Gate C untouched).
 
+## 2026-08-07 — Deep-dive panels + HTML companion with ntfy delivery (human-directed)
+
+Jared reviewed two StockRover stock reports and a sell-side research
+report against the desk's weekly deep dive and approved the full
+alignment build ("yes go for it all"), plus tap-to-open delivery: "I'd
+like the HTML file pushed on ntfy so that I can view it like the read
+along daily briefing delivery."
+
+- **Fundamentals parse-out** (`FundamentalsSnap` +24 fields): the cached
+  `schwab_fundamentals` documents always contained ~3x more than we
+  parsed — margins (TTM), ROE/ROA/ROI, current/quick ratio, D/E ratios,
+  book value, P/S, P/CF, rev/EPS change, full dividend schedule, shares
+  out, avg volume. Pure derive-on-read: old documents light up too, zero
+  new API calls. The 0-is-absent rule (shortInt precedent) extends to
+  every panel field; `interestCoverage`, `divGrowthRate3Year`,
+  `epsChangeYear` confirmed all-zero vendor stubs and left unparsed.
+- **Market context panels** (deep dive §5, still deterministic/
+  quarantined, invariant 5): Snapshot (52wk range gauges), Valuation
+  (P/E percentile vs GICS sector AND vs full S&P batch via new
+  `schwab.universe_fundamentals` — walks batches newest-first for ≥300-
+  name coverage so the Friday theme-scoped prefetch doesn't shrink the
+  peer set), Profitability, Growth, Financial strength, Dividends
+  (payout ratio + next ex/pay dates), Returns & risk (1M/3M returns +
+  max drawdown + annualized vol from the nightly singles window, with
+  an S&P-median benchmark row), and **Warnings** — StockRover-style
+  deterministic rules (declining/decelerating sales, declining EPS,
+  negative EPS, stretched payout ≥90%, top-decile P/E, near 52wk low,
+  days-to-cover) in `analytics.market_context.market_warnings`. Each
+  panel degrades independently; sector percentiles wait for the first
+  full-universe Saturday batch.
+- **HTML companion** (`reporting/deepdive_html.py`, new dep
+  `markdown`): the vault MD stays the artifact of record (Obsidian
+  wikilinks/footnotes/mermaid); the SAME rendered markdown becomes one
+  self-contained HTML page — no CDN, no JS; our own mermaid xychart
+  blocks are re-parsed into inline SVG (unknown mermaid degrades to
+  <pre>), Obsidian callouts become styled blocks, footnotes resolve.
+  Written atomically to `reporting/output/deepdive-html/` (tailscale-
+  served at `/desk-reports`), config `reporting.deepdive_html`.
+- **Delivery**: `ops.alerts.notify` gains `click=`; `deepdive.write`
+  publishes the companion and pushes "Deep dive ready" with tap-to-open
+  (best-effort — an HTML/push failure never fails the dive or weekly
+  cycle). ONE-TIME manual step (needs root): `sudo tailscale serve --bg
+  --set-path=/desk-reports /home/jared/projects/Agents_TradingDesk/reporting/output/deepdive-html`.
+- Not feasible from Schwab (recorded so nobody hunts): analyst
+  consensus/estimates/surprises/next-earnings (no endpoint), EV/EBITDA
+  & DCF (no debt/cash/EBITDA line items), 5y seasonality (history
+  volume). Valuation/margin TREND tables unlock as weekly fundamentals
+  snapshots accumulate (footnoted on the report).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

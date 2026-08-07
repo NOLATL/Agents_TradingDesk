@@ -11,6 +11,7 @@ narrative section falls back to the deterministic layout — loudly.
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -227,13 +228,24 @@ def _mermaid_xychart(title: str, labels: list[str], series: list[tuple[str, str,
     return out
 
 
+def _gauge(pos) -> str:
+    """0..1 → `▰▰▱▱▱ 38%` range gauge (52wk position, percentiles)."""
+    if pos is None:
+        return "—"
+    filled = max(0, min(5, round(float(pos) * 5)))
+    return f"{'▰' * filled}{'▱' * (5 - filled)} {float(pos):.0%}"
+
+
 def _market_context_lines(conn, b) -> list[str]:
-    """Deterministic reviewer-domain market context (Phase C, DECISIONS.md
-    2026-07-30): vol regime + per-symbol valuation/positioning snapshots
-    from the newest cached Schwab documents, computed at render time. No
-    LLM touches this section; nothing here enters analyst context, basket
+    """Deterministic reviewer-domain market context (Phase C 2026-07-30;
+    panel expansion 2026-08-07): vol regime + StockRover-style per-symbol
+    panels (valuation w/ sector+index percentiles, profitability, growth,
+    financial strength, dividends, returns & risk, warnings) from the
+    newest cached Schwab documents, computed at render time. No LLM
+    touches this section; nothing here enters analyst context, basket
     construction, or any assertion table (invariant 5). Best-effort: dark
-    or absent data renders a one-line note, never fails the render."""
+    or absent data renders a one-line note, never fails the render; each
+    panel degrades independently (absence, not repair)."""
     from config.loader import CONFIG
 
     if not CONFIG.get("schwab", {}).get("enabled"):
@@ -244,10 +256,17 @@ def _market_context_lines(conn, b) -> list[str]:
              " never a decision input — invariant 5. No LLM touches this"
              " section.*", ""]
     try:
+        from datetime import date as _date
         from decimal import Decimal
+        from statistics import median
 
-        from analytics.market_context import days_to_cover_flag, valuation_snapshot
+        from analytics.market_context import (
+            market_warnings, max_drawdown, payout_ratio, period_return,
+            valuation_snapshot,
+        )
         from analytics.regime import level_percentile, vol_regime
+        from analytics.valuation import percentile_rank
+        from analytics.volatility import annualized_volatility
         from data.adapters import schwab
 
         cfg = CONFIG["schwab"]
@@ -256,6 +275,21 @@ def _market_context_lines(conn, b) -> list[str]:
         quotes, quotes_tag = schwab.latest_quotes(conn, kind="theme")
         tape, _ = schwab.latest_quotes(conn, kind="tape")
         funds, funds_tag = schwab.latest_fundamentals(conn)
+
+        def safe(fn, default):
+            try:
+                return fn()
+            except Exception:  # noqa: BLE001 — panels degrade independently
+                return default
+
+        # Cross-sectional context: full-universe fundamentals batch (may be
+        # older than the theme prefetch batch) + GICS sector membership.
+        universe, universe_tag = safe(
+            lambda: schwab.universe_fundamentals(conn), ({}, None))
+        sector_of: dict[str, str] = safe(
+            lambda: dict(conn.execute(
+                "SELECT ticker, gics_sector FROM sp500_constituents"
+            ).fetchall()), {})
 
         vix_symbol = cfg.get("vix_history", {}).get("symbol", "$VIX")
         vix = tape.get(vix_symbol)
@@ -271,16 +305,29 @@ def _market_context_lines(conn, b) -> list[str]:
                          + (f" — **{regime}**." if regime else "."))
             lines.append("")
 
-        rows = []
-        peer_pes = [f.pe for f in funds.values()
-                    if f.pe is not None and f.symbol in symbols]
+        fmt = lambda v, spec="{:.1f}": "—" if v is None else spec.format(float(v))  # noqa: E731
+        pos_pes = {s: f.pe for s, f in universe.items()
+                   if f.pe is not None and f.pe > 0}
         dtc_threshold = Decimal(str(cfg.get("crowding", {})
                                     .get("days_to_cover_flag", "8")))
-        for symbol in symbols:
+        crosscheck_tol = Decimal(str(
+            cfg.get("fundamentals", {})
+            .get("pe_crosscheck_tolerance_pct", "5"))) / 100
+
+        present = [s for s in symbols
+                   if funds.get(s) is not None or quotes.get(s) is not None]
+        if not present:
+            lines.append("*No cached Schwab fundamentals/quotes for the"
+                         " theme symbols yet.*")
+            return lines
+
+        snaps, sector_pctile, index_pctile, payouts = {}, {}, {}, {}
+        for symbol in present:
             f, q = funds.get(symbol), quotes.get(symbol)
-            if f is None and q is None:
-                continue
-            snap = valuation_snapshot(
+            sector = sector_of.get(symbol)
+            sector_pes = [pe for s, pe in pos_pes.items()
+                          if sector and sector_of.get(s) == sector]
+            snaps[symbol] = valuation_snapshot(
                 symbol,
                 vendor_pe=f.pe if f else None, pb=f.pb if f else None,
                 peg=f.peg if f else None, div_yield=f.div_yield if f else None,
@@ -294,38 +341,156 @@ def _market_context_lines(conn, b) -> list[str]:
                 hi52=(q.high_52wk if q and q.high_52wk is not None
                       else (f.high_52wk if f else None)),
                 eps_ttm=f.eps_ttm if f else None,
-                peer_pes=peer_pes,
-                crosscheck_tolerance=Decimal(str(
-                    cfg.get("fundamentals", {})
-                    .get("pe_crosscheck_tolerance_pct", "5"))) / 100,
+                peer_pes=sector_pes,
+                crosscheck_tolerance=crosscheck_tol,
             )
-            rows.append(snap)
-        if rows:
-            lines += ["| Symbol | P/E | vs peers | PEG | Div yld | Beta"
-                      " | 52wk pos | Short int | Days-to-cover |",
-                      "|---|---|---|---|---|---|---|---|---|"]
-            fmt = lambda v, spec="{:.1f}": "—" if v is None else spec.format(float(v))  # noqa: E731
-            for s in rows:
-                dtc = fmt(s.short_int_days_to_cover)
-                if days_to_cover_flag(s.short_int_days_to_cover, dtc_threshold):
-                    dtc = f"**{dtc}** ⚠"
-                lines.append(
-                    f"| {s.symbol} | {fmt(s.pe)}"
-                    f" | {fmt(s.pe_pctile_vs_peers, '{:.0%}') if s.pe_pctile_vs_peers is not None else '—'}"
-                    f" | {fmt(s.peg, '{:.2f}')} | {fmt(s.div_yield, '{:.2f}')}%"
-                    f" | {fmt(s.beta, '{:.2f}')}"
-                    f" | {fmt(s.range_position_52wk, '{:.0%}') if s.range_position_52wk is not None else '—'}"
-                    f" | {fmt(s.short_int_pct_float, '{:.1f}')}% | {dtc} |")
-            notes = [s.pe_crosscheck_note for s in rows if s.pe_crosscheck_note]
-            for note in notes:
-                lines.append(f"- ⚠ {note}")
+            if f and f.pe is not None and f.pe > 0 and len(pos_pes) >= 20:
+                index_pctile[symbol] = percentile_rank(f.pe, list(pos_pes.values()))
+                if len(sector_pes) >= 5:
+                    sector_pctile[symbol] = snaps[symbol].pe_pctile_vs_peers
+            payouts[symbol] = payout_ratio(
+                f.div_amount if f else None, f.eps_ttm if f else None)
+
+        def panel(title: str, header: list[str],
+                  row: "Callable[[str], list[str] | None]") -> None:
+            rows = [(s, row(s)) for s in present]
+            rows = [(s, r) for s, r in rows if r and any(c != "—" for c in r)]
+            if not rows:
+                return
+            lines.append(f"### {title}")
             lines.append("")
-            lines.append(f"*Fundamentals as of batch {funds_tag or 'n/a'};"
-                         f" quotes as of batch {quotes_tag or 'n/a'}"
-                         " (Friday 22:45 ET pre-fetch when live).*")
-        else:
-            lines.append("*No cached Schwab fundamentals/quotes for the"
-                         " theme symbols yet.*")
+            lines.append("| Symbol | " + " | ".join(header) + " |")
+            lines.append("|---" * (len(header) + 1) + "|")
+            for s, r in rows:
+                lines.append(f"| {s} | " + " | ".join(r) + " |")
+            lines.append("")
+
+        def _cap(v):
+            return "—" if v is None else f"${float(v) / 1e9:,.1f}B"
+
+        panel("Snapshot", ["Last", "Day %", "Mkt cap", "Beta", "52wk range"],
+              lambda s: [
+                  fmt(quotes[s].last, "{:.2f}") if quotes.get(s) else "—",
+                  fmt(quotes[s].net_pct_change, "{:+.2f}") if quotes.get(s) else "—",
+                  _cap(snaps[s].market_cap),
+                  fmt(snaps[s].beta, "{:.2f}"),
+                  _gauge(snaps[s].range_position_52wk)])
+
+        panel("Valuation",
+              ["P/E", "vs sector", "vs S&P 500", "P/S", "P/CF", "P/B", "PEG"],
+              lambda s: [
+                  fmt(snaps[s].pe),
+                  _gauge(sector_pctile.get(s)),
+                  _gauge(index_pctile.get(s)),
+                  fmt(funds[s].ps, "{:.2f}") if funds.get(s) else "—",
+                  fmt(funds[s].pcf, "{:.1f}") if funds.get(s) else "—",
+                  fmt(snaps[s].pb, "{:.2f}"),
+                  fmt(snaps[s].peg, "{:.2f}")])
+
+        panel("Profitability",
+              ["Gross %", "Oper %", "Net %", "ROE %", "ROA %", "ROI %"],
+              lambda s: [
+                  fmt(funds[s].gross_margin_ttm), fmt(funds[s].operating_margin_ttm),
+                  fmt(funds[s].net_margin_ttm), fmt(funds[s].roe),
+                  fmt(funds[s].roa), fmt(funds[s].roi)]
+              if funds.get(s) else None)
+
+        panel("Growth (vendor-reported %)",
+              ["Rev Δ TTM", "Rev Δ 1Y", "EPS Δ TTM"],
+              lambda s: [
+                  fmt(funds[s].rev_change_ttm), fmt(funds[s].rev_change_year),
+                  fmt(funds[s].eps_change_ttm)]
+              if funds.get(s) else None)
+
+        panel("Financial strength",
+              ["D/E", "LT D/E", "Current", "Quick", "BV/share"],
+              lambda s: [
+                  fmt(funds[s].total_debt_to_equity / 100 if funds[s].total_debt_to_equity is not None else None, "{:.2f}x"),
+                  fmt(funds[s].lt_debt_to_equity / 100 if funds[s].lt_debt_to_equity is not None else None, "{:.2f}x"),
+                  fmt(funds[s].current_ratio, "{:.2f}"),
+                  fmt(funds[s].quick_ratio, "{:.2f}"),
+                  fmt(funds[s].book_value_per_share, "${:.2f}")]
+              if funds.get(s) else None)
+
+        panel("Dividends",
+              ["Fwd $/yr", "Yield %", "Freq", "Payout %", "Next ex-div", "Pays"],
+              lambda s: [
+                  fmt(funds[s].div_amount, "${:.2f}"),
+                  fmt(funds[s].div_yield, "{:.2f}"),
+                  str(funds[s].div_freq) if funds[s].div_freq else "—",
+                  fmt(payouts.get(s), "{:.0f}"),
+                  funds[s].next_div_ex_date or "—",
+                  funds[s].next_div_pay_date or "—"]
+              if funds.get(s) and funds[s].div_amount is not None else None)
+
+        # Returns & risk from the nightly Schwab singles window (~130 days,
+        # split-adjusted only — footnoted below). Benchmark row = median of
+        # the full singles universe over the same windows.
+        closes, closes_tag = safe(
+            lambda: schwab.latest_single_closes(conn, cutoff=_date.today()),
+            ({}, None))
+        if closes:
+            # Windows bounded by the nightly singles history (~90 sessions
+            # of the 130-calendar-day window) — no column that can't fill.
+            windows = [("1M", 21), ("3M", 63)]
+
+            def _ret_row(series):
+                out = [period_return(series, n) for _, n in windows]
+                out.append(max_drawdown(series))
+                out.append(Decimal(str(annualized_volatility(series)))
+                           if len(series) >= 30 else None)
+                return out
+
+            def row_for(s):
+                series = closes.get(s)
+                if not series:
+                    return None
+                return [fmt(v, "{:+.1%}") if i < 3 else fmt(v, "{:.2f}")
+                        for i, v in enumerate(_ret_row(series))]
+
+            panel("Returns & risk (≤3M window, split-adjusted)",
+                  ["1M", "3M", "Max DD", "Vol (ann)"], row_for)
+            med = []
+            for _, n in windows:
+                vals = sorted(v for v in
+                              (period_return(c, n)
+                               for c in closes.values()) if v is not None)
+                med.append(median(vals) if vals else None)
+            if any(v is not None for v in med) and len(closes) >= 100:
+                lines.insert(
+                    len(lines) - 1,
+                    f"| *S&P 500 median* | {fmt(med[0], '{:+.1%}')}"
+                    f" | {fmt(med[1], '{:+.1%}')} | — | — |")
+
+        warn_lines = []
+        for s in present:
+            f = funds.get(s)
+            flags = market_warnings(
+                rev_change_ttm=f.rev_change_ttm if f else None,
+                rev_change_year=f.rev_change_year if f else None,
+                eps_change_ttm=f.eps_change_ttm if f else None,
+                eps_ttm=f.eps_ttm if f else None,
+                payout=payouts.get(s),
+                pe_pctile_vs_peers=sector_pctile.get(s),
+                range_position_52wk=snaps[s].range_position_52wk,
+                days_to_cover=snaps[s].short_int_days_to_cover,
+                days_to_cover_threshold=dtc_threshold,
+            )
+            warn_lines += [f"- **{s}** — {flag}" for flag in flags]
+        warn_lines += [f"- ⚠ {snap.symbol} — {snap.pe_crosscheck_note}"
+                       for snap in snaps.values() if snap.pe_crosscheck_note]
+        if warn_lines:
+            lines.append("### Warnings (deterministic rules)")
+            lines.append("")
+            lines += warn_lines
+            lines.append("")
+
+        lines.append(
+            f"*Fundamentals batch {funds_tag or 'n/a'}"
+            + (f" (percentiles vs universe batch {universe_tag})"
+               if universe_tag and universe_tag != funds_tag else "")
+            + f"; quotes batch {quotes_tag or 'n/a'}. Valuation/margin trend"
+            " tables unlock as weekly snapshots accumulate.*")
         return lines
     except Exception as e:  # noqa: BLE001 — context must never fail the render
         return lines + [f"*Market context unavailable:"
@@ -767,4 +932,26 @@ def write(conn, thesis: Thesis, week_key: str,
     vault = Path(SLICE["vault_dir"]) / "reports" / "deepdive" / name
     vault.parent.mkdir(parents=True, exist_ok=True)
     vault.write_text(content)
+    _publish_html(content, thesis, week_key)
     return [local, vault]
+
+
+def _publish_html(content: str, thesis: Thesis, week_key: str) -> None:
+    """HTML companion + ntfy tap-to-open link (read-along delivery pattern,
+    2026-08-07). Best-effort by contract: the vault markdown above is the
+    artifact of record — an HTML or push failure never fails the dive."""
+    try:
+        from ops import alerts
+        from reporting import deepdive_html
+
+        url = deepdive_html.publish(
+            content, f"{week_key}-{thesis.strategy_tag}",
+            title=f"Deep dive {week_key} — {thesis.strategy_tag}")
+        if url:
+            alerts.notify(
+                title=f"Deep dive ready — {thesis.strategy_tag}",
+                message=(f"{week_key} · {thesis.status.value}\n"
+                         f"Tap to read, or open {url}"),
+                tags="bar_chart", click=url)
+    except Exception as e:  # noqa: BLE001 — companion must never fail the dive
+        print(f"[deepdive-html:skipped {type(e).__name__}: {e}]", file=sys.stderr)

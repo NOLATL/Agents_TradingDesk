@@ -20,8 +20,11 @@ load_dotenv()
 NTFY_BASE = CONFIG.get("stage3", {}).get("alerts", {}).get("base_url", "https://ntfy.sh")
 
 
-def notify(title: str, message: str, priority: str = "default", tags: str = "") -> bool:
-    """Send a push alert. priority: min|low|default|high|urgent."""
+def notify(title: str, message: str, priority: str = "default", tags: str = "",
+           click: str = "") -> bool:
+    """Send a push alert. priority: min|low|default|high|urgent. `click`
+    sets the URL opened when the notification is tapped (read-along
+    delivery pattern, 2026-08-07)."""
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         print(f"[alert:no-topic] {title}: {message}", file=sys.stderr)
@@ -32,6 +35,8 @@ def notify(title: str, message: str, priority: str = "default", tags: str = "") 
     params = {"title": title, "priority": priority}
     if tags:
         params["tags"] = tags
+    if click:
+        params["click"] = click
     try:
         httpx.post(
             f"{NTFY_BASE}/{topic}",

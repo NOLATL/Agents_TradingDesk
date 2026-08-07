@@ -111,10 +111,94 @@ def test_market_context_lines_render_table(monkeypatch):
     text = "\n".join(lines)
     assert "## Market context (reviewer-domain — quarantined)" in text
     assert "No LLM touches this section" in text
-    assert "| ETN | 30.0" in text
+    assert "### Snapshot" in text
+    assert "### Valuation" in text
+    assert "| ETN | 30.0" in text              # valuation row leads with P/E
     assert "38%" in text                       # (300-250)/(380-250) 52wk pos
-    assert "**9.0** ⚠" in text                 # days-to-cover flag
+    assert "### Warnings (deterministic rules)" in text
+    assert "Days-to-cover 9.0" in text         # squeeze flag moved to warnings
+    assert "### Dividends" not in text         # no dividend data → panel absent
     assert "ZZNONE" not in text                # absent data absent, not faked
+
+
+def test_market_context_panel_rows(monkeypatch):
+    """Panel fields (margins, ratios, growth, dividends) render from the
+    extended FundamentalsSnap; missing sub-fields stay dashes."""
+    from data.adapters.schwab import FundamentalsSnap, QuoteSnap
+    from reporting.deepdive import _market_context_lines
+
+    monkeypatch.setitem(
+        __import__("config.loader", fromlist=["CONFIG"]).CONFIG,
+        "schwab", {"enabled": True, "vix_history": {"symbol": "$VIX"},
+                   "regime_bands": [], "crowding": {"days_to_cover_flag": "8"},
+                   "fundamentals": {"pe_crosscheck_tolerance_pct": "5"}})
+    funds = {"WEC": FundamentalsSnap(
+        symbol="WEC", pe=D("20.9"), pb=D("2.69"), peg=None, div_yield=D("3.52"),
+        eps_ttm=D("5.16"), market_cap=D("35276454203"), beta=D("0.46"),
+        short_int_pct_float=None, short_int_days_to_cover=None,
+        high_52wk=D("119.91"), low_52wk=D("102.95"),
+        ps=D("3.74"), pcf=D("9.48"), book_value_per_share=D("43.38"),
+        gross_margin_ttm=D("41.9"), operating_margin_ttm=D("16.7"),
+        net_margin_ttm=D("16.7"), roe=D("11.99"), roa=D("3.02"), roi=D("3.53"),
+        current_ratio=D("0.53"), quick_ratio=D("0.30"),
+        lt_debt_to_equity=D("157.99"), total_debt_to_equity=D("135.01"),
+        rev_change_ttm=D("8.9"), rev_change_year=D("13.96"),
+        eps_change_ttm=D("-0.41"),
+        div_amount=D("3.81"), div_pay_amount=D("0.9525"), div_freq=4,
+        next_div_ex_date="2026-11-16", next_div_pay_date="2026-12-01")}
+    quotes = {"WEC": QuoteSnap(symbol="WEC", last=D("108.26"),
+                               net_pct_change=D("-0.3"), close=D("108.6"),
+                               high_52wk=D("119.91"), low_52wk=D("102.95"),
+                               total_volume=1000, description="WEC Energy")}
+    _fake_schwab(monkeypatch, funds=funds, quotes=quotes, tape={})
+    text = "\n".join(_market_context_lines(object(), _bundle(["WEC"])))
+    assert "### Profitability" in text and "| WEC | 41.9 | 16.7" in text
+    assert "### Growth" in text and "8.9 | 14.0 | -0.4" in text
+    assert "### Financial strength" in text and "1.35x" in text
+    assert "### Dividends" in text and "$3.81" in text and "2026-11-16" in text
+    # payout = 3.81/5.16 ≈ 74% — below the 90% warning threshold
+    assert "| 74 |" in text
+    # decelerating sales (TTM 8.9 < 1Y 14.0) + declining EPS fire as warnings
+    assert "Decelerating sales" in text
+    assert "Declining EPS" in text
+
+
+def test_payout_ratio_and_windows():
+    from analytics.market_context import max_drawdown, payout_ratio, period_return
+    assert payout_ratio(D("3.81"), D("5.16")).quantize(D("0.1")) == D("73.8")
+    assert payout_ratio(D("1"), D("0")) is None      # loss-maker → None
+    assert payout_ratio(None, D("5")) is None
+    closes = [D(str(100 + i)) for i in range(30)]    # monotonic rise
+    assert period_return(closes, 21) == D("129") / D("108") - 1
+    assert period_return(closes, 40) is None         # window uncovered
+    assert max_drawdown(closes) == 0
+    assert max_drawdown([D("100"), D("120"), D("90"), D("110")]) == D("90") / D("120") - 1
+    assert max_drawdown([D("100")]) is None
+
+
+def test_market_warnings_rules():
+    from analytics.market_context import market_warnings
+
+    base = dict(rev_change_ttm=None, rev_change_year=None, eps_change_ttm=None,
+                eps_ttm=None, payout=None, pe_pctile_vs_peers=None,
+                range_position_52wk=None, days_to_cover=None,
+                days_to_cover_threshold=D("8"))
+    assert market_warnings(**base) == []
+    flags = market_warnings(**{**base,
+                               "rev_change_ttm": D("-2.2"),
+                               "eps_change_ttm": D("-28.8"),
+                               "payout": D("95"),
+                               "pe_pctile_vs_peers": D("0.95"),
+                               "range_position_52wk": D("0.05"),
+                               "days_to_cover": D("9")})
+    text = " / ".join(flags)
+    assert "Declining sales" in text and "Declining EPS" in text
+    assert "Stretched payout" in text and "top decile" in text
+    assert "Near 52-week low" in text and "Days-to-cover 9.0" in text
+    # deceleration fires only when growth is still positive but slowing
+    decel = market_warnings(**{**base, "rev_change_ttm": D("2"),
+                               "rev_change_year": D("10")})
+    assert any("Decelerating sales" in f for f in decel)
 
 
 def test_market_context_dark_renders_note(monkeypatch):
