@@ -400,6 +400,8 @@ def run(conn, as_of: date, commit: bool = True) -> LiveRunSummary:
         if as_of < GENESIS:
             pins = restatement_guard(conn, exp.id, None)
             rebuild_price_bars(conn, pins or None)
+            if commit:
+                conn.commit()      # persist the idempotent bar projection before gating
             completeness_gate(conn, active_universe(cfg, as_of), as_of)
             return LiveRunSummary(as_of, 0, 0, 0, cfg.initial_cash, False,
                                   tuple(sorted(pins)), dry_run=True)
@@ -409,6 +411,8 @@ def run(conn, as_of: date, commit: bool = True) -> LiveRunSummary:
         ).fetchone()[0]
         pins = restatement_guard(conn, exp.id, last_live)
         rebuild_price_bars(conn, pins or None)
+        if commit:
+            conn.commit()          # persist the idempotent bar projection before gating
         completeness_gate(conn, active_universe(cfg, as_of), as_of)
 
         manifest = persist.build_manifest(conn, exp.id, GENESIS, as_of, cfg)
