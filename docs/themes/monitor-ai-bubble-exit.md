@@ -254,6 +254,14 @@ resolves in this window.
 
 ## 5. Implementation: what the existing fleet can automate
 
+**Status (2026-11-01): built.** Trackers (item 1) and the deterministic
+scorecard (item 2, as `ops/bubble_monitor.py`, FRED + Schwab) are live
+code; see DECISIONS.md 2026-11-01. Terminal: `uv run python -m
+ops.bubble_monitor show`. Score the human links with `... score <LINK>
+<GREEN|YELLOW|RED|CLEARED> "rationale"`; raise hard reds with `...
+hard-red raise <key> "note"` (`hard-red list` shows keys). Deferred: GPU
+price feeds, weekly web digest, Daily Briefing section.
+
 Kept outside the desk's decision path (Prime Directive: this is the human's
 dashboard, not a desk input):
 
