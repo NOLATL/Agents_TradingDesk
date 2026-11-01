@@ -285,7 +285,10 @@ Legend: **Desk** = Agents_TradingDesk (existing; EDGAR/Tiingo/FRED for the
 AI-capex theme universe — NVDA, MSFT, ORCL, AVGO, CRWV, ARCC, OBDC, OWL;
 daily monitoring only while that thesis is ACTIVE). **Trackers** =
 Agents_News_Trackers topic (*proposed*, weekly). **Scorecard** = FRED
-scorecard script (*proposed*). **Global** = Agents_News_Global (existing,
+scorecard script (*proposed*; FRED + Schwab inputs). **Schwab** = the desk's
+existing Schwab market-data layer (nightly candles for ~503 S&P names,
+macro tape, fundamentals, SPY option chain) — *existing* where marked,
+*extend* where it needs new symbols. **Global** = Agents_News_Global (existing,
 incidental coverage only). **You** = manual weekly/quarterly check. All
 agent output lands in the **Daily Briefing**.
 
@@ -293,25 +296,29 @@ agent output lands in the **Daily Briefing**.
 |---|---|---|---|
 | A | Credit spreads (HY/IG), real yields, financial conditions | FRED `BAMLH0A0HYM2`, `BAMLC0A0CM`, `DFII10`, `DGS10`, `NFCI` | Scorecard |
 | A | Fed path, balance sheet, inflation | FOMC/SEP; FRED `WALCL`, `RRPONTSYD` | Scorecard + Global |
+| A | Market-priced rates & credit (daily) | Schwab quotes: 10y yield index / `/ZN` futures, HYG, LQD, JNK, BKLN vs IEF | Schwab (*extend*) |
 | A | Systemic-risk reports | Fed FSR, IMF GFSR, BIS Quarterly, Fed SLOOS | You (semiannual/quarterly) |
-| A | Japan / carry | BoJ, USDJPY | Global + You |
+| A | Japan / carry | BoJ; USD/JPY | Schwab (*extend* — forex already works for EUR/USD) + Global |
 | B | Lab fundraising, valuations, OpenAI IPO | The Information/Bloomberg/Reuters; EDGAR S-1/A | Trackers `ai-monetization` |
 | B | Vendor / circular financing | NVDA 10-Q; press | Desk (NVDA filings) + Trackers `ai-accounting-quality` |
-| B | SoftBank / Gulf capacity | SoftBank results; oil price | Global + You |
-| C | Hyperscaler capex guides, capex/OCF, FCF | Earnings calls, 10-Qs | Desk (MSFT, ORCL filings) + You (GOOGL/AMZN/META at earnings) |
+| B | SoftBank / Gulf capacity | SoftBank results; oil via `/CL` | Schwab (existing, `/CL`) + Global |
+| C | Hyperscaler capex guides, capex/OCF, FCF | Earnings calls, 10-Qs | Desk (MSFT, ORCL filings) + You (GOOGL/AMZN/META at earnings) — Schwab has no capex/estimates/earnings-date endpoint |
 | C | Debt/equity raises, lease commitments | 8-K, 424B, 10-K lease footnotes; Moody's | Desk (universe filings) + You |
 | C | Ratings (Oracle to junk?) | S&P/Moody's/Fitch | Trackers `ai-financing-credit` |
 | D | Data-center ABS/CMBS spreads, CoreWeave debt, Oracle CDS | KBRA/Fitch presales, TRACE, press | Trackers `ai-financing-credit` (news) + You (levels) |
 | D | Private-credit default rates | Fitch PCDR, Proskauer index, KBRA DLD | You (monthly) |
-| D | BDC non-accruals, PIK, NAV discounts | BDC 10-Qs; prices | Desk (ARCC, OBDC, OWL) |
+| D | BDC non-accruals, PIK | BDC 10-Qs | Desk (ARCC, OBDC, OWL) |
+| D | BDC / alt-manager / neocloud prices (daily stress gauge) | Schwab: BIZD, ARCC, OBDC, OWL, APO, ARES, BX, KKR, CRWV, NBIS, IREN, APLD | Schwab (S&P names existing; rest *extend*) |
 | D | Retail private-credit redemptions / gates | EDGAR `SC TO-I` | Trackers `ai-financing-credit` + You |
 | E | Data-center construction spending | Census construction put in place | Scorecard |
 | E | Vacancy, pre-leasing, lease cancellations | CBRE/JLL/Cushman/datacenterHawk; sell-side via press | Trackers `ai-datacenter-buildout` + You (CBRE semiannual) |
 | E | Power queues, utility large-load pipelines | PJM, ERCOT, LBNL; utility calls | Trackers `ai-datacenter-buildout` |
 | E | Permits, moratoria, power-price backlash | County agendas, Data Center Watch, PUC dockets, EIA | Trackers `ai-datacenter-buildout` |
 | E | Turbines / transformers / electrical backlog | GE Vernova, Vertiv, Eaton earnings | You (earnings) |
+| E | Data-center REIT & power-supplier prices | Schwab: DLR, EQIX, GEV, VRT, ETN, VST, CEG | Schwab (existing — S&P constituents) |
 | F | GPU rental rates (reserved), secondary prices | Silicon Data index, SemiAnalysis | You (weekly) |
 | F | TSMC monthly revenue; Korea/Taiwan chip exports | TSMC IR (~10th), Korea customs | Scorecard (TSMC) + You |
+| F | Semis tape + options pricing of AI risk | Schwab: NVDA, AVGO, AMD, MU (existing); TSM, SMH (*extend*); option chains on NVDA/SMH/CRWV/ORCL for IV, put/call, skew (*extend* — SPY chain already runs) | Schwab |
 | F | NVDA receivables / inventory | NVDA 10-Q | Desk (NVDA filings) |
 | G | Lab revenue, margin, burn | S-1, press | Trackers `ai-monetization` |
 | G | Cloud growth vs capex; RPO conversion | MSFT/ORCL/GOOGL/AMZN earnings, 10-Qs | Desk (MSFT, ORCL) + You |
@@ -320,10 +327,22 @@ agent output lands in the **Daily Briefing**.
 | H | Useful lives, D&A vs capex, off-B/S SPVs, related-party revenue | 10-K/10-Q footnotes | Desk (universe filings) + You (10-K season) |
 | H | SEC comment letters, restatements, auditor changes | EDGAR `CORRESP`, 8-K Items 4.01/4.02 | Trackers `ai-accounting-quality` + You |
 | H | Short-seller / forensic claims | Burry, Chanos, short reports | Trackers `ai-accounting-quality` |
-| I | Prices, earnings reactions, momentum | Tiingo | Desk (universe + momentum scan) |
-| I | Concentration, RSP vs SPY, trend vs 200-day | Prices | Scorecard |
+| I | Prices, earnings reactions, momentum | Tiingo + Schwab nightly candles | Desk (universe + momentum scan, existing) |
+| I | Valuation (P/E, P/S, margins) of the AI complex | Schwab fundamentals | Schwab (existing; Saturday full-universe batch) |
+| I | VIX regime, SPY put/call, risk-on/off composite | Schwab macro tape + SPY chain | Schwab (existing — momentum-scan "Macro tape" / "Crowding & sentiment") |
+| I | Concentration (top-10 weight), RSP vs SPY, trend vs 200-day | Schwab candles × shares outstanding (fundamentals) | Schwab → Scorecard (*extend*: needs a ≥200-session window for `$SPX`/SOX; singles window is 130 days) |
 | I | Margin debt, ERP, insider selling | FINRA, Damodaran, Form 4 | You (monthly) |
 | All | Stage scoring / de-risk decision | This file | **You only** |
+
+**Schwab can't cover** (so these stay FRED / Trackers / You): credit
+spreads as published OAS, CDS, ABS/DDTL spreads, ratings, analyst
+estimates and earnings dates, filings/footnotes, BDC NAVs, short interest
+(vendor zeros), GPU rental rates. **Guardrails:** Schwab is data-only
+(never order routing); token stays outside git/LLM context; personal-use
+license, no redistribution. Anything built into the desk repo from this
+must stay quarantined from the analyst roles the way
+`analytics/market_context.py` is (invariant 5: price performance never
+reaches basket construction) — it is operator context, not a desk input.
 
 ### Baseline (fill at first monthly review, Nov 2026)
 
