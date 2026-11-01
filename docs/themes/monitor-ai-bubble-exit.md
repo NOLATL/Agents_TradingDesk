@@ -279,6 +279,52 @@ dashboard, not a desk input):
    reserved GPU rates, private-credit default indices, lease-cancellation
    channel checks. Those go in the weekly human checklist.
 
+### Who watches what (topic → source → agent)
+
+Legend: **Desk** = Agents_TradingDesk (existing; EDGAR/Tiingo/FRED for the
+AI-capex theme universe — NVDA, MSFT, ORCL, AVGO, CRWV, ARCC, OBDC, OWL;
+daily monitoring only while that thesis is ACTIVE). **Trackers** =
+Agents_News_Trackers topic (*proposed*, weekly). **Scorecard** = FRED
+scorecard script (*proposed*). **Global** = Agents_News_Global (existing,
+incidental coverage only). **You** = manual weekly/quarterly check. All
+agent output lands in the **Daily Briefing**.
+
+| Link | Topic | Source(s) | Agent |
+|---|---|---|---|
+| A | Credit spreads (HY/IG), real yields, financial conditions | FRED `BAMLH0A0HYM2`, `BAMLC0A0CM`, `DFII10`, `DGS10`, `NFCI` | Scorecard |
+| A | Fed path, balance sheet, inflation | FOMC/SEP; FRED `WALCL`, `RRPONTSYD` | Scorecard + Global |
+| A | Systemic-risk reports | Fed FSR, IMF GFSR, BIS Quarterly, Fed SLOOS | You (semiannual/quarterly) |
+| A | Japan / carry | BoJ, USDJPY | Global + You |
+| B | Lab fundraising, valuations, OpenAI IPO | The Information/Bloomberg/Reuters; EDGAR S-1/A | Trackers `ai-monetization` |
+| B | Vendor / circular financing | NVDA 10-Q; press | Desk (NVDA filings) + Trackers `ai-accounting-quality` |
+| B | SoftBank / Gulf capacity | SoftBank results; oil price | Global + You |
+| C | Hyperscaler capex guides, capex/OCF, FCF | Earnings calls, 10-Qs | Desk (MSFT, ORCL filings) + You (GOOGL/AMZN/META at earnings) |
+| C | Debt/equity raises, lease commitments | 8-K, 424B, 10-K lease footnotes; Moody's | Desk (universe filings) + You |
+| C | Ratings (Oracle to junk?) | S&P/Moody's/Fitch | Trackers `ai-financing-credit` |
+| D | Data-center ABS/CMBS spreads, CoreWeave debt, Oracle CDS | KBRA/Fitch presales, TRACE, press | Trackers `ai-financing-credit` (news) + You (levels) |
+| D | Private-credit default rates | Fitch PCDR, Proskauer index, KBRA DLD | You (monthly) |
+| D | BDC non-accruals, PIK, NAV discounts | BDC 10-Qs; prices | Desk (ARCC, OBDC, OWL) |
+| D | Retail private-credit redemptions / gates | EDGAR `SC TO-I` | Trackers `ai-financing-credit` + You |
+| E | Data-center construction spending | Census construction put in place | Scorecard |
+| E | Vacancy, pre-leasing, lease cancellations | CBRE/JLL/Cushman/datacenterHawk; sell-side via press | Trackers `ai-datacenter-buildout` + You (CBRE semiannual) |
+| E | Power queues, utility large-load pipelines | PJM, ERCOT, LBNL; utility calls | Trackers `ai-datacenter-buildout` |
+| E | Permits, moratoria, power-price backlash | County agendas, Data Center Watch, PUC dockets, EIA | Trackers `ai-datacenter-buildout` |
+| E | Turbines / transformers / electrical backlog | GE Vernova, Vertiv, Eaton earnings | You (earnings) |
+| F | GPU rental rates (reserved), secondary prices | Silicon Data index, SemiAnalysis | You (weekly) |
+| F | TSMC monthly revenue; Korea/Taiwan chip exports | TSMC IR (~10th), Korea customs | Scorecard (TSMC) + You |
+| F | NVDA receivables / inventory | NVDA 10-Q | Desk (NVDA filings) |
+| G | Lab revenue, margin, burn | S-1, press | Trackers `ai-monetization` |
+| G | Cloud growth vs capex; RPO conversion | MSFT/ORCL/GOOGL/AMZN earnings, 10-Qs | Desk (MSFT, ORCL) + You |
+| G | Enterprise AI adoption / ROI | Census BTOS, Ramp AI Index, surveys | Scorecard (BTOS) + Trackers `ai-monetization` |
+| G | Productivity, AI layoffs | BLS, Challenger | Global + You (quarterly) |
+| H | Useful lives, D&A vs capex, off-B/S SPVs, related-party revenue | 10-K/10-Q footnotes | Desk (universe filings) + You (10-K season) |
+| H | SEC comment letters, restatements, auditor changes | EDGAR `CORRESP`, 8-K Items 4.01/4.02 | Trackers `ai-accounting-quality` + You |
+| H | Short-seller / forensic claims | Burry, Chanos, short reports | Trackers `ai-accounting-quality` |
+| I | Prices, earnings reactions, momentum | Tiingo | Desk (universe + momentum scan) |
+| I | Concentration, RSP vs SPY, trend vs 200-day | Prices | Scorecard |
+| I | Margin debt, ERP, insider selling | FINRA, Damodaran, Form 4 | You (monthly) |
+| All | Stage scoring / de-risk decision | This file | **You only** |
+
 ### Baseline (fill at first monthly review, Nov 2026)
 
 | Link | Key reading (date, value, source) | G/Y/R |
