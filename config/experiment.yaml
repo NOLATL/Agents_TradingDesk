@@ -259,6 +259,77 @@ schwab:
                                             # (2026-08-07) — crowding abstains until a real
                                             # SI source (e.g. FINRA files) is added
 
+# AI-bubble exit monitor (DECISIONS.md 2026-11-01; plan in
+# docs/themes/monitor-ai-bubble-exit.md). OPERATOR-ONLY and quarantined
+# (invariant 5): the human's personal de-risking dashboard — never desk
+# evidence, baskets, or engine input. Thresholds are INITIAL human-tunable
+# judgments; "bigger = worse" orientation (see analytics/bubble_monitor.py).
+# FRED lookbacks count observations (~21/month daily, ~4/month weekly).
+bubble_monitor:
+  enabled: true
+  human_max_age_days: 35          # human link scores older than this render STALE and stop counting
+  schwab_history_years: 1         # >=200 sessions for the 200-day MA
+  fred_series:
+    BAMLH0A0HYM2: "ICE BofA US High Yield OAS"
+    BAMLC0A0CM: "ICE BofA US Corporate (IG) OAS"
+    NFCI: "Chicago Fed National Financial Conditions"
+    DFII10: "10y TIPS real yield"
+    DGS10: "10y Treasury yield"
+    DEXJPUS: "USD/JPY (H.10)"
+  schwab_symbols: ["$SPX", SPY, RSP, SMH, NVDA, HYG, BIZD,
+                   ORCL, CRWV, NBIS, IREN, APLD,
+                   OWL, APO, ARES, BX, KKR,
+                   DLR, EQIX, VRT]
+  confirm_signal_ids: [spx_trend, hy_oas_widening]   # stage 3 needs ALL >= YELLOW
+  hard_red_keys:
+    capex_cut: "A top-4 hyperscaler cut its capex guide"
+    oracle_junk: "Oracle downgraded to BB+/Ba1 or lower"
+    neocloud_default: "Neocloud / DC developer / Stargate SPV default, restructuring or emergency financing"
+    private_credit_gate: "Retail private-credit fund gated redemptions"
+    restatement: "Item 4.02 restatement or impairment wave at an AI-infrastructure name"
+    openai_ipo_broken: "OpenAI IPO pulled or trading below issue"
+  signals:
+    # --- A Funding regime
+    - {id: hy_oas_widening, link: A, label: "HY spread off 6-mo tight", kind: widening,
+       series: BAMLH0A0HYM2, lookback: 126, yellow: "0.50", red: "1.00"}
+    - {id: ig_oas_widening, link: A, label: "IG spread off 6-mo tight", kind: widening,
+       series: BAMLC0A0CM, lookback: 126, yellow: "0.20", red: "0.40"}
+    - {id: nfci_level, link: A, label: "Financial conditions (NFCI; >0 = tighter than avg)", kind: level,
+       series: NFCI, yellow: "-0.25", red: "0.00"}
+    - {id: real_yield_rise, link: A, label: "10y real yield off 6-mo low", kind: widening,
+       series: DFII10, lookback: 126, yellow: "0.50", red: "0.75"}
+    - {id: yen_carry, link: A, label: "Yen surge (USD/JPY fall, 1 mo)", kind: fall_pct,
+       series: DEXJPUS, lookback: 20, yellow: "0.03", red: "0.05"}
+    - {id: credit_equity_divergence, link: A, label: "Credit widening while S&P near high", kind: divergence,
+       spread: BAMLH0A0HYM2, spread_lookback: 63, spread_widening: "0.50",
+       equity: "$SPX", equity_window: 252, near_high: "0.03"}
+    # --- D Financing plumbing (market-priced proxies; levels like ABS/CDS are human-scored)
+    - {id: hyg_drawdown, link: D, label: "HY bond ETF drawdown", kind: drawdown,
+       series: HYG, window: 126, yellow: "0.03", red: "0.06"}
+    - {id: bdc_vs_spy, link: D, label: "BDCs vs S&P (1 mo)", kind: rel_return,
+       series: BIZD, vs: SPY, lookback: 20, yellow: "0.05", red: "0.10"}
+    - {id: alt_managers, link: D, label: "Alt managers off 1y highs", kind: basket_drawdown,
+       members: [OWL, APO, ARES, BX, KKR], window: 252, yellow: "0.25", red: "0.40"}
+    - {id: ai_periphery, link: D, label: "Leveraged AI periphery off 1y highs", kind: basket_drawdown,
+       members: [ORCL, CRWV, NBIS, IREN, APLD], window: 252, yellow: "0.35", red: "0.55"}
+    # --- E Physical build (prices only; permits/leases are human-scored)
+    - {id: dc_infra, link: E, label: "DC REITs + power gear off 1y highs", kind: basket_drawdown,
+       members: [DLR, EQIX, VRT], window: 252, yellow: "0.20", red: "0.35"}
+    # --- F Compute / semis
+    - {id: semis_vs_spy, link: F, label: "Semis vs S&P (1 mo)", kind: rel_return,
+       series: SMH, vs: SPY, lookback: 20, yellow: "0.07", red: "0.12"}
+    - {id: nvda_drawdown, link: F, label: "NVDA off 1y high", kind: drawdown,
+       series: NVDA, window: 252, yellow: "0.20", red: "0.35"}
+    - {id: smh_trend, link: F, label: "Semis trend (200-day)", kind: below_ma,
+       series: SMH, window: 200, red_drawdown: "0.25"}
+    # --- I Market structure
+    - {id: spx_trend, link: I, label: "S&P 500 trend (200-day)", kind: below_ma,
+       series: "$SPX", window: 200, red_drawdown: "0.20"}
+    - {id: spx_drawdown, link: I, label: "S&P 500 off 1y high", kind: drawdown,
+       series: "$SPX", window: 252, yellow: "0.10", red: "0.20"}
+    - {id: leaders_breaking, link: I, label: "Cap-weight lagging equal-weight (1 mo)", kind: rel_return,
+       series: SPY, vs: RSP, lookback: 20, yellow: "0.03", red: "0.06"}
+
 reporting:
   deepdive_html:                            # 2026-08-07: HTML companion for weekly deep dives
     enabled: true                           # vault MD stays the artifact of record

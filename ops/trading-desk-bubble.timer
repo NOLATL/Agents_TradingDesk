@@ -1,0 +1,11 @@
+[Unit]
+Description=AI-bubble exit monitor at 01:15 ET Tue-Sat (after the 00:30 scan's Schwab window)
+
+[Timer]
+OnCalendar=Tue..Sat *-*-* 01:15:00 America/New_York
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
+# ln -sf ~/projects/Agents_TradingDesk/ops/trading-desk-bubble.{service,timer} ~/.config/systemd/user/

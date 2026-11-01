@@ -222,6 +222,30 @@ def latest_index_history(conn, symbol: str) -> list[Candle]:
     return parse_candles(max(docs, key=lambda d: d.ingestion_time))
 
 
+def ingest_tagged_history(conn, symbol: str, *, period_years: int,
+                          purpose: str) -> tuple[Document, bool]:
+    """Unconditional daily-candle history fetch tagged with a `purpose`
+    stored param, so an operator consumer (e.g. the AI-bubble monitor,
+    2026-11-01) reads back only its own documents and never collides with
+    the scan's freshness-gated `period` histories."""
+    params = {"symbol": symbol, "periodType": "year", "period": period_years,
+              "frequencyType": "daily", "frequency": 1}
+    return _fetch(conn, url=f"{BASE}/pricehistory", params=params,
+                  source_name="schwab_history", extra_stored={"purpose": purpose},
+                  timeout=60.0)
+
+
+def latest_tagged_history(conn, symbol: str, *, purpose: str) -> list[Candle]:
+    """Newest tagged history document only (LIMIT 1 — never loads the
+    accumulated archive)."""
+    docs = repo.fetch(
+        conn, Document,
+        "source_name = 'schwab_history' AND query_params->>'symbol' = %s"
+        " AND query_params->>'purpose' = %s ORDER BY ingestion_time DESC LIMIT 1",
+        (symbol, purpose))
+    return parse_candles(docs[0]) if docs else []
+
+
 # --------------------------------------------------------------------------- #
 # Batch quotes (schwab_quotes) + movers (schwab_movers)
 # --------------------------------------------------------------------------- #
