@@ -916,6 +916,55 @@ carrying Jared's own ops.approve accept/reject decisions with rationales
 Zero new data, zero API cost, compounds with every decision. Second:
 the citation-mix readout above.
 
+## 2026-11-01 — AI-bubble exit monitor (human-directed)
+
+Jared wants a personal "when do I de-risk?" dashboard for his AI-bubble
+view (plan + indicator map: `docs/themes/monitor-ai-bubble-exit.md`),
+running on the Framework and readable in the terminal. Built as an
+**operator-only, quarantined** module beside the momentum scan — it is the
+human's portfolio tool, not desk evidence, and nothing in it reaches a
+basket, an LLM role, or the engine (invariant 5).
+
+- **No LLM anywhere.** Signals, link statuses, and the stage are pure
+  Python (`analytics/bubble_monitor.py`); thresholds are config
+  (`bubble_monitor:` in experiment.yaml), marked INITIAL human-tunable
+  judgments. The stage (0 WATCH / 1 TRIM / 2 DEFEND / 3 OUT) is the output
+  of the plan's pre-committed rule; the decision stays human.
+- **Data:** FRED (HY/IG OAS, NFCI, real/nominal 10y, USD/JPY) via the
+  existing adapter; Schwab 1-year daily histories for ~20 symbols via new
+  `schwab.ingest_tagged_history` / `latest_tagged_history` (`purpose`
+  stored-param tag, LIMIT-1 reads — the existing `latest_index_history`
+  loads every cached doc and would grow unbounded nightly). Every response
+  is an immutable `documents` row (invariant 4).
+- **Human half:** links with no automated feed (B capital, C capex,
+  G monetization, H accounting; E partly) are scored by the human via
+  `ops.bubble_monitor score` (append-only `bubble_human_scores`, HUMAN
+  provenance, rationale required). Scores older than 35 days render STALE
+  and stop counting; an unscored link renders UNSCORED loudly — never
+  silently GREEN (same spirit as MONITOR GAP). A human GREEN never masks
+  an automated RED (link = worst of both). Hard reds (`bubble_hard_reds`,
+  config key list) are raised/cleared only by the human.
+- **Ops:** `ops/bubble_monitor.py run` (timer Tue–Sat 01:15 ET, after the
+  00:30 scan's Schwab window; ~20 extra Schwab calls) → upserts one
+  `bubble_runs` row per session (idempotent) → vault note
+  `TradingDesk/reports/bubble-monitor/<session>.md` → ntfy only when the
+  stage moves (high when up). `show` is cache-only (no network) for the
+  terminal. Dark vendor → NO_DATA + gap note, never a failed run.
+- **Migration 015** (raw-SQL operator tables, outside TABLE_MODELS like
+  `edgar_term_registry`).
+- **Narrative half** lives in Agents_News_Trackers (4 weekly topics:
+  ai-financing-credit, ai-datacenter-buildout, ai-accounting-quality,
+  ai-monetization).
+- **Deferred (not built):** free GPU-price feeds (Vast.ai hourly public
+  feed, Azure Retail Prices API incl. reservation prices) — formats could
+  not be verified from the build sandbox, so verify on the Framework
+  first; weekly cited web digest of public sources (Proskauer/Fitch
+  defaults, Silicon Data blog, DC-ABS deals) — an LLM collation, so it
+  would follow invariant 13 (Qwen drafts / Sonnet reviews) and stay
+  read-and-verify, never a scorecard input; a Daily Briefing section
+  (Agents_DailyBriefing change); Census BTOS / TSMC monthly / FINRA margin
+  debt feeds; extra option chains (NVDA/SMH/CRWV/ORCL).
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
