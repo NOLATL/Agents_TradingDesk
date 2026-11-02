@@ -11,6 +11,7 @@ the analyst (invariant 5): the human's personal de-risking dashboard.
     uv run python -m ops.bubble_monitor hard-red clear oracle_junk "upgraded back"
     uv run python -m ops.bubble_monitor hard-red list
     uv run python -m ops.bubble_monitor history
+    uv run python -m ops.bubble_monitor trmnl [--dry-run]          # push the e-ink board
 
 `run` ingests FRED, Tiingo, SEC XBRL, Azure, FINRA and Census (cached
 immutably via fetch_and_cache, invariant 4; Vast is display-only by license),
@@ -25,11 +26,13 @@ Every number here is deterministic Python; no model is involved.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 
@@ -50,6 +53,7 @@ from data.adapters import bubble_feeds as feeds
 from data.adapters import fred, tiingo
 from data.db import connect
 from ops.alerts import loud, notify
+from reporting import bubble_trmnl
 from reporting.bubble_monitor import (
     BubbleReport,
     HardRed,
@@ -64,6 +68,7 @@ CFG = CONFIG.get("bubble_monitor", {})
 LINK_CODES = set("ABCDEFGHI")
 HUMAN_STATUSES = {"GREEN", "YELLOW", "RED", "CLEARED"}
 Dated = list[tuple[date, Decimal]]
+VARS_PATH = Path(__file__).resolve().parent.parent / "reporting/output/bubble-monitor/trmnl-vars.json"
 
 
 def code_version() -> str:
@@ -328,6 +333,9 @@ def run(as_of: str | None = None) -> None:
         gaps = ingest(conn)
         report = compute(conn, session, gaps)
         persist(conn, report)
+    trmnl_gap = bubble_trmnl.push(_trmnl_body(report))
+    if trmnl_gap:
+        report.gaps.append(trmnl_gap)
     path = write_report(render_markdown(report), session)
     msg = stage_change_message(report)
     if msg:
@@ -336,6 +344,26 @@ def run(as_of: str | None = None) -> None:
     print(f"\nwrote {path}")
     if len(report.gaps) >= int(CFG.get("gap_alert_count", 5)):
         notify("AI-bubble monitor: feeds degraded", "; ".join(report.gaps)[:400], priority="high")
+
+
+def _trmnl_body(report: BubbleReport) -> bytes:
+    mv = bubble_trmnl.merge_vars(report)
+    VARS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    VARS_PATH.write_text(json.dumps(mv, indent=1))
+    return bubble_trmnl.encode(mv)
+
+
+def trmnl(dry_run: bool) -> None:
+    with connect() as conn:
+        row = conn.execute("SELECT max(session) FROM bubble_runs").fetchone()
+        report = compute(conn, row[0] or _session(None))
+    body = _trmnl_body(report)
+    print(f"payload {len(body)} B, vars in {VARS_PATH}")
+    if dry_run:
+        return
+    if not os.environ.get("BUBBLE_TRMNL_UUID"):
+        sys.exit("BUBBLE_TRMNL_UUID is not set in .env")
+    print(bubble_trmnl.push(body) or "pushed")
 
 
 def show(color: bool) -> None:
@@ -414,6 +442,8 @@ def main(argv: list[str]) -> None:
         run(as_of)
     elif cmd == "show":
         show(color="--no-color" not in rest and sys.stdout.isatty())
+    elif cmd == "trmnl":
+        trmnl("--dry-run" in rest)
     elif cmd == "watch":
         watch(int(rest[0]) if rest else 300)
     elif cmd == "score" and len(rest) >= 3:

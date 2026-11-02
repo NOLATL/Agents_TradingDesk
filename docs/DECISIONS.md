@@ -1004,6 +1004,15 @@ synthetic data. Supersedes that entry where they differ.
 - Open: GPU reserved rates beyond Azure's list price, ABS/CDS levels, private
   credit default indices, link B (human-scored); weekly web digest not built.
 
+## 2026-11-02 — AI-bubble board on the TRMNL e-ink display (human-directed)
+
+"Published to my terminal" meant the TRMNL display, not a shell; the CLI
+dashboard stays as the detail view. Same pattern as Agents_Cronometer: nightly
+webhook push of merge variables to its own Private Plugin, markup in
+`reporting/trmnl/bubble.liquid.html`, dormant until `BUBBLE_TRMNL_UUID` is set.
+Plain-div bars, no JS or CDN chart. A failed push is a gap note, never a failed
+run. The health plugin is untouched; the board needs its own plugin.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

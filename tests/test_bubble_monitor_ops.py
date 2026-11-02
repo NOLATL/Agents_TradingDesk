@@ -194,3 +194,35 @@ def test_pending_shows_when_rule_outruns_held_stage():
     assert "PENDING Rule reads stage 2" in render_terminal(r, color=False)
     assert "**Pending:**" in render_markdown(r)
     assert "PENDING" not in render_terminal(make_report(), color=False)
+
+
+# ------------------------------------------------------------------ TRMNL board
+
+def _full_report():
+    from dataclasses import replace
+
+    from analytics.bubble_monitor import ReplayPoint, ScoreResult
+    pts = [ReplayPoint(date.fromordinal(TODAY.toordinal() - 130 + i), Decimal(40 + i % 30), 0, 0,
+                       {c: Decimal(50) for c in "ABCDEFGHI"}, {}, {}) for i in range(131)]
+    return replace(make_report(), score=ScoreResult(Decimal("68.4"), "HIGH", Decimal("0.9"),
+                                                    {c: Decimal(60) for c in "ABCDEFGHI"}),
+                   history=pts)
+
+
+def test_trmnl_payload_fits_budget_and_has_every_template_key():
+    import re
+    from pathlib import Path
+
+    from reporting import bubble_trmnl
+    mv = bubble_trmnl.merge_vars(_full_report())
+    assert len(bubble_trmnl.encode(mv)) <= bubble_trmnl.MAX_BYTES
+    assert mv["s"] == 68 and len(mv["links"]) == 9 and len(mv["hist"]) == bubble_trmnl.HIST_BARS
+    template = (Path(__file__).parent.parent / "reporting/trmnl/bubble.liquid.html").read_text()
+    used = set(re.findall(r"{{\s*(\w+)", template)) - {"l", "v", "x"}
+    assert used <= set(mv), used - set(mv)
+
+
+def test_trmnl_push_dormant_without_uuid(monkeypatch):
+    from reporting import bubble_trmnl
+    monkeypatch.delenv("BUBBLE_TRMNL_UUID", raising=False)
+    assert bubble_trmnl.push(b"{}") is None
