@@ -254,16 +254,14 @@ resolves in this window.
 
 ## 5. Implementation: what the existing fleet can automate
 
-**Status (2026-11-01): built.** Trackers (item 1) and the deterministic
-scorecard (item 2, as `ops/bubble_monitor.py`, FRED + Schwab) are live
-code; see DECISIONS.md 2026-11-01. Terminal: `uv run python -m
-ops.bubble_monitor show`. Score the human links with `... score <LINK>
-<GREEN|YELLOW|RED|CLEARED> "rationale"`; raise hard reds with `...
-hard-red raise <key> "note"` (`hard-red list` shows keys). Deferred: GPU
-price feeds, weekly web digest, Daily Briefing section.
+**Status (2026-11-02): built and live.** See DECISIONS.md 2026-11-02, which
+supersedes anything below that disagrees (notably: prices come from Tiingo, not
+Schwab, and links C, G and H are mostly automated from SEC filings).
 
-Kept outside the desk's decision path (Prime Directive: this is the human's
-dashboard, not a desk input):
+    uv run python -m ops.bubble_monitor show             # dashboard
+    uv run python -m ops.bubble_monitor watch 300        # redraws
+    uv run python -m ops.bubble_monitor score B YELLOW "rationale"
+    uv run python -m ops.bubble_monitor hard-red list
 
 1. **Story trackers (zero new code).** Drop 4 topic files into
    `Agents_News_Trackers/topics/`, all weekly, Google News queries:

@@ -965,6 +965,45 @@ basket, an LLM role, or the engine (invariant 5).
   (Agents_DailyBriefing change); Census BTOS / TSMC monthly / FINRA margin
   debt feeds; extra option chains (NVDA/SMH/CRWV/ORCL).
 
+## 2026-11-02 — AI-bubble monitor: risk score, dashboard, filing feeds (human-directed)
+
+Jared asked for a score, action, supporting data and trends in the terminal.
+Rebuilt on the Framework after the first cut (2026-11-01) had only run on
+synthetic data. Supersedes that entry where they differ.
+
+- **Tiingo replaces Schwab as the monitor's price source.** The Schwab refresh
+  token expired 2026-09-28 and nobody noticed for five weeks, so a dashboard
+  that needs the Sunday ritual is not a dashboard. Reuses tonight's
+  daily/scan documents, fetches only what they lack, under `tiingo_scan`.
+  `stale_gaps` renders any dead daily feed loudly; ≥5 gaps pushes ntfy.
+- **New feeds** (`contracts/bubble_feeds.yaml`): SEC XBRL concepts, Azure
+  retail prices, FINRA margin debt, Census BTOS. Links C, G and part of H are
+  now automated. TSMC refuses automated requests (403); not built.
+- **Vast.ai is display-only.** Its license bars "use in any index, benchmark,
+  or derivative product" without a data license, so it is shown with
+  attribution, never scored, never in `documents`. A test enforces this.
+- **Score vs stage.** The 0-100 score is a gauge; the stage rule alone sets
+  the action. Score = weighted link scores, renormalized over scored links,
+  coverage always shown; hard reds floor it.
+- **Trend = point-in-time replay**, not stored history: signals, stage and
+  score recomputed per session from cached series and dated human rows.
+  Filing-derived points are dated by FILED date. FRED uses the latest vintage
+  (small, accepted look-ahead on a personal dashboard).
+- **Three corrections from auditing the first live run**, which read
+  "stage 2, score 70": (1) backlog "off peak" was a base effect (Oracle's 2025
+  jump lapping, 204% → 89%), now graded on the growth level; (2) capex/revenue,
+  capex/depreciation and margin-debt growth are build-up gauges, capped at
+  YELLOW (`max_status`) so a high level cannot trigger a stage; (3) the raw
+  stage flipped 26 times in 260 sessions, so the held stage requires 5 sessions
+  to rise and 10 to fall (`held_stages`); hard reds apply at once. A raw reading
+  above the held stage renders as PENDING.
+- **Action means a recommendation.** Nothing here can place an order; Schwab
+  stays data-only. `tranche_pct` is null until the human sets it.
+- All thresholds and weights remain uncalibrated judgments: one cycle of real
+  data does not validate them, and there is no bust in the replay window.
+- Open: GPU reserved rates beyond Azure's list price, ABS/CDS levels, private
+  credit default indices, link B (human-scored); weekly web digest not built.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name
