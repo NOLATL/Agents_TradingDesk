@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS bubble_runs (
     session      DATE PRIMARY KEY,
     stage        INTEGER NOT NULL CHECK (stage BETWEEN 0 AND 3),
     red_links    TEXT[] NOT NULL,
+    score        NUMERIC,
+    coverage     NUMERIC,
     payload      JSONB NOT NULL,
     code_version TEXT NOT NULL,
     computed_at  TIMESTAMPTZ NOT NULL DEFAULT now()

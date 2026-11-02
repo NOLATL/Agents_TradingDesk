@@ -27,6 +27,7 @@ from reporting.bubble_monitor import (
 )
 
 TODAY = date(2026, 11, 2)
+OLD = date(2000, 1, 3)
 
 
 def make_report(red_links=("A", "C"), previous=0, hard=()) -> BubbleReport:
@@ -39,14 +40,14 @@ def make_report(red_links=("A", "C"), previous=0, hard=()) -> BubbleReport:
     res = stage(links, list(hard), sigs, confirm_signal_ids=["spx_trend"])
     return BubbleReport(TODAY, links, res,
                         [HardRed(k, "desc", "note", TODAY) for k in hard],
-                        previous, ["Schwab dark (test)"])
+                        previous, ["Schwab dark (test)"], stage=res.stage)
 
 
 def test_markdown_has_banner_frontmatter_stage_and_gaps():
     md = render_markdown(make_report())
     assert md.startswith("---\ndate: 2026-11-02\ntype: bubble-monitor\nstage: 2")
     assert QUARANTINE_BANNER in md
-    assert "STAGE 2 ▲ from 0 — DEFEND" in md
+    assert "STAGE 2 ▲ from 0 — DEFEND" in md and "**Action:**" in md
     assert "credit and capex links both red" in md
     assert "UNSCORED links" in md and "STALE human scores: H" in md
     assert "Schwab dark (test)" in md
@@ -97,8 +98,9 @@ def test_config_signals_all_evaluate_on_empty_data():
     for spec in cfg["signals"]:
         assert evaluate_signal(spec, {}).status == NO_DATA
         names = [spec.get(k) for k in ("series", "vs", "spread", "equity")] + spec.get("members", [])
+        known = set(cfg["fred_series"]) | set(cfg["tiingo_symbols"]) | set(cfg["derived_series"])
         for n in filter(None, names):
-            assert n in cfg["fred_series"] or n in cfg["schwab_symbols"], (spec["id"], n)
+            assert n in known, (spec["id"], n)
     assert set(cfg["confirm_signal_ids"]) <= set(ids)
 
 
@@ -119,17 +121,15 @@ def conn():
 
 
 def test_human_scores_newest_wins_and_cleared_withdraws(conn):
-    from ops.bubble_monitor import load_human
+    from ops.bubble_monitor import current_human, load_human
     conn.execute("DELETE FROM bubble_human_scores WHERE note LIKE 'test-%'")
     for status, note in [("YELLOW", "test-1"), ("RED", "test-2")]:
         conn.execute("INSERT INTO bubble_human_scores (link, status, note, recorded_on)"
                      " VALUES ('B', %s, %s, %s)", (status, note, TODAY))
-    scores, _ = load_human(conn)
-    assert scores["B"].status == "RED"
+    assert current_human(load_human(conn)[0])["B"].status == "RED"
     conn.execute("INSERT INTO bubble_human_scores (link, status, note, recorded_on)"
                  " VALUES ('B', 'CLEARED', 'test-3', %s)", (TODAY,))
-    scores, _ = load_human(conn)
-    assert "B" not in scores
+    assert "B" not in current_human(load_human(conn)[0])
     conn.rollback()
 
 
@@ -143,13 +143,54 @@ def test_hard_red_single_active_per_key(conn):
 
 
 def test_persist_is_idempotent_upsert(conn):
+    from dataclasses import replace
+
     from ops.bubble_monitor import persist, previous_stage
-    r = make_report()
+    # An ancient session: this suite runs against the live dev DB, so it must
+    # never overwrite or delete a real night's row.
+    r = replace(make_report(), session=OLD)
     persist(conn, r)
     persist(conn, r)
     rows = conn.execute("SELECT stage, red_links FROM bubble_runs WHERE session = %s",
-                        (TODAY,)).fetchall()
+                        (OLD,)).fetchall()
     assert rows == [(2, ["A", "C"])]
-    assert previous_stage(conn, date(2026, 11, 3)) == 2
-    conn.execute("DELETE FROM bubble_runs WHERE session = %s", (TODAY,))
+    assert previous_stage(conn, date(2000, 1, 4)) == 2
+    conn.execute("DELETE FROM bubble_runs WHERE session = %s", (OLD,))
     conn.commit()
+
+
+# ------------------------------------------------------------------ dashboard
+
+def test_sparkline_scales_and_keeps_gaps():
+    from reporting.bubble_monitor import sparkline
+    assert sparkline([Decimal(1), Decimal(8)]) == "▁█"
+    assert sparkline([Decimal(1), None, Decimal(8)]) == "▁ █"
+    assert len(sparkline([Decimal(i) for i in range(200)], 24)) == 24
+    assert sparkline([]) == ""
+
+
+def test_dashboard_shows_score_action_trend_and_vast_attribution():
+    from dataclasses import replace
+
+    from analytics.bubble_monitor import ReplayPoint, ScoreResult
+    from data.adapters.bubble_feeds import VastPrice
+    r = replace(
+        make_report(), score=ScoreResult(Decimal("62"), "HIGH", Decimal("0.8"), {"A": Decimal("85")}),
+        history=[ReplayPoint(date(2026, 9, 1), Decimal("40"), 0, 0, {"A": Decimal("30")}, {}, {}),
+                 ReplayPoint(TODAY, Decimal("62"), 2, 0, {"A": Decimal("85")}, {}, {})],
+        escalation="Stage 3 needs the market to confirm.", tranche_pct={2: 35},
+        vast=[VastPrice("H100 SXM", Decimal("2.40"), 52, Decimal("1.75"))])
+    text = render_terminal(r, color=False)
+    assert "62/100" in text and "HIGH" in text and "1m   +22" in text
+    assert "ACTION  De-risk tranche 2. Size: 35%" in text
+    assert "not scored" in text and "$2.40/hr" in text
+    assert "Size: unset" in render_terminal(replace(r, tranche_pct=None), color=False)
+
+
+def test_pending_shows_when_rule_outruns_held_stage():
+    from dataclasses import replace
+    r = replace(make_report(), stage=0)
+    assert "STAGE 0" in render_terminal(r, color=False)
+    assert "PENDING Rule reads stage 2" in render_terminal(r, color=False)
+    assert "**Pending:**" in render_markdown(r)
+    assert "PENDING" not in render_terminal(make_report(), color=False)

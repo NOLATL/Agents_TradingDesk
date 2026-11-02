@@ -1,0 +1,35 @@
+# Data contract: AI-bubble exit monitor feeds (DECISIONS.md 2026-11-01/02).
+# OPERATOR-ONLY, quarantined from the analyst (invariant 5). Formats verified
+# live from the Framework 2026-11-02.
+#
+#   sec_xbrl     data.sec.gov/api/xbrl/companyconcept  XBRL facts, one symbol+tag per doc
+#   azure_retail prices.azure.com/api/retail/prices    ND96isr H100 v5 (8 GPUs), eastus
+#   finra_margin finra.org margin-statistics.xlsx      monthly debit balances ($M)
+#   census_btos  census.gov/hfp/btos Sector.xlsx       biweekly business AI-use share
+#   vast (NOT cached in documents; display-only, see license below)
+source_name: bubble_feeds
+data_semantics:
+  sec_xbrl: >
+    Cash-flow facts are YTD in most 10-Qs; discrete quarters are derived by
+    differencing same-start facts (analytics.bubble_monitor.discrete_quarters).
+    Each derived point is dated by its FILED date, so replay never sees a
+    quarter before it was public. Capex = cash paid for PP&E; finance leases
+    are excluded (understates true capex at MSFT/ORACLE).
+  azure_retail: >
+    List prices, change rarely; identical responses dedupe by hash, so the
+    series holds change points only, dated by ingestion.
+  census_btos: >
+    The Census question now reads "Super Intelligence or SI (formerly ...
+    Artificial Intelligence or AI)"; matched on question id 7, sector XX,
+    answer Yes. Dates come from the "Collection and Reference Dates" sheet.
+license_permitted_use:
+  sec_xbrl: public domain US government data; declared User-Agent, <10 req/s
+  census_btos: public domain US government data
+  finra_margin: public statistics, personal use
+  azure_retail: public unauthenticated API, personal use
+  vast: >
+    "Free for display and citation with attribution. Bulk collection,
+    redistribution, or use in any index, benchmark, or derivative product
+    requires a data license: data@vast.ai". Therefore: DISPLAY ONLY, shown
+    with attribution, NEVER an input to any signal or the risk score, and
+    not archived (one overwritten local file, not `documents`).

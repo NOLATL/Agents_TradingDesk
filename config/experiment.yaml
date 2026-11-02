@@ -259,27 +259,54 @@ schwab:
                                             # (2026-08-07) — crowding abstains until a real
                                             # SI source (e.g. FINRA files) is added
 
-# AI-bubble exit monitor (DECISIONS.md 2026-11-01; plan in
+# AI-bubble exit monitor (DECISIONS.md 2026-11-01/02; plan in
 # docs/themes/monitor-ai-bubble-exit.md). OPERATOR-ONLY and quarantined
 # (invariant 5): the human's personal de-risking dashboard — never desk
-# evidence, baskets, or engine input. Thresholds are INITIAL human-tunable
-# judgments; "bigger = worse" orientation (see analytics/bubble_monitor.py).
-# FRED lookbacks count observations (~21/month daily, ~4/month weekly).
+# evidence, baskets, or engine input. All thresholds and weights are INITIAL
+# human-tunable judgments, oriented "bigger = worse". Severity 0-100 per
+# signal: calm→0, yellow→50, red→85 (analytics/bubble_monitor.py).
+# FRED lookbacks count observations; Tiingo lookbacks count sessions.
 bubble_monitor:
   enabled: true
-  human_max_age_days: 35          # human link scores older than this render STALE and stop counting
-  schwab_history_years: 1         # >=200 sessions for the 200-day MA
+  human_max_age_days: 35          # human link scores older than this go STALE and stop counting
+  stage_confirm_up: 5             # raw stage must hold this many sessions to take effect
+  stage_confirm_down: 10          # ...and this many to step down; hard reds apply at once
+  market_stale_days: 5            # a daily feed older than this renders a loud gap
+  history_sessions: 130           # replayed score/trend window (~6 months)
+  tranche_pct: null               # your sizing per de-risk stage, e.g. {1: 25, 2: 35, 3: 40}
   fred_series:
     BAMLH0A0HYM2: "ICE BofA US High Yield OAS"
     BAMLC0A0CM: "ICE BofA US Corporate (IG) OAS"
     NFCI: "Chicago Fed National Financial Conditions"
     DFII10: "10y TIPS real yield"
-    DGS10: "10y Treasury yield"
     DEXJPUS: "USD/JPY (H.10)"
-  schwab_symbols: ["$SPX", SPY, RSP, SMH, NVDA, HYG, BIZD,
+  tiingo_symbols: [SPY, RSP, SMH, NVDA, HYG, BIZD,
                    ORCL, CRWV, NBIS, IREN, APLD,
                    OWL, APO, ARES, BX, KKR,
                    DLR, EQIX, VRT]
+  derived_series: [hs_capex_ocf, hs_capex_rev, hs_capex_yoy, hs_fcf_neg, hs_capex_dep,
+                   rpo_yoy, nvda_dso, nvda_rev_yoy, azure_h100_spot, azure_h100_res1y,
+                   finra_margin, finra_margin_yoy, btos_ai_use]
+  xbrl:
+    hyperscalers: [MSFT, GOOGL, AMZN, META, ORCL]
+    rpo_names: [MSFT, GOOGL, ORCL]
+    ciks: {MSFT: 789019, GOOGL: 1652044, AMZN: 1018724, META: 1326801, ORCL: 1341439, NVDA: 1045810}
+    tags:                         # per metric; the tag with the newest fact wins per company
+      capex: [PaymentsToAcquirePropertyPlantAndEquipment, PaymentsToAcquireProductiveAssets]
+      ocf: [NetCashProvidedByUsedInOperatingActivities]
+      revenue: [RevenueFromContractWithCustomerExcludingAssessedTax, Revenues]
+      dep: [DepreciationDepletionAndAmortization, Depreciation]
+      rpo: [RevenueRemainingPerformanceObligation]
+      ar: [AccountsReceivableNetCurrent]
+  vast_models: ["H100 SXM", "H200", "B200"]   # display only: license bars scoring
+  score:
+    weights: {A: "0.15", B: "0.10", C: "0.15", D: "0.20", E: "0.05",
+              F: "0.10", G: "0.10", H: "0.05", I: "0.10"}
+    human_severity: {GREEN: "15", YELLOW: "50", RED: "85"}
+    max_weight: "0.6"             # link auto score = 0.6*worst + 0.4*mean of its signals
+    hard_red_floor: "50"          # any hard red floors the score here
+    hard_red_step: "5"            # each additional hard red adds this to the floor
+    bands: [[LOW, "30"], [ELEVATED, "50"], [HIGH, "70"], [SEVERE, "100"]]
   confirm_signal_ids: [spx_trend, hy_oas_widening]   # stage 3 needs ALL >= YELLOW
   hard_red_keys:
     capex_cut: "A top-4 hyperscaler cut its capex guide"
@@ -294,16 +321,23 @@ bubble_monitor:
        series: BAMLH0A0HYM2, lookback: 126, yellow: "0.50", red: "1.00"}
     - {id: ig_oas_widening, link: A, label: "IG spread off 6-mo tight", kind: widening,
        series: BAMLC0A0CM, lookback: 126, yellow: "0.20", red: "0.40"}
-    - {id: nfci_level, link: A, label: "Financial conditions (NFCI; >0 = tighter than avg)", kind: level,
-       series: NFCI, yellow: "-0.25", red: "0.00"}
+    - {id: nfci_level, link: A, label: "Financial conditions (NFCI)", kind: level,
+       series: NFCI, calm: "-0.60", yellow: "-0.25", red: "0.00"}
     - {id: real_yield_rise, link: A, label: "10y real yield off 6-mo low", kind: widening,
        series: DFII10, lookback: 126, yellow: "0.50", red: "0.75"}
-    - {id: yen_carry, link: A, label: "Yen surge (USD/JPY fall, 1 mo)", kind: fall_pct,
+    - {id: yen_carry, link: A, label: "Yen surge (USD/JPY, 1 mo)", kind: fall_pct,
        series: DEXJPUS, lookback: 20, yellow: "0.03", red: "0.05"}
-    - {id: credit_equity_divergence, link: A, label: "Credit widening while S&P near high", kind: divergence,
+    - {id: credit_equity_divergence, link: A, label: "Credit widening, S&P near high", kind: divergence,
        spread: BAMLH0A0HYM2, spread_lookback: 63, spread_widening: "0.50",
-       equity: "$SPX", equity_window: 252, near_high: "0.03"}
-    # --- D Financing plumbing (market-priced proxies; levels like ABS/CDS are human-scored)
+       equity: SPY, equity_window: 252, near_high: "0.03"}
+    # --- C Hyperscaler capex (10-Q/10-K XBRL; top-5 aggregate, trailing 12 mo)
+    - {id: capex_ocf, link: C, label: "Top-5 capex / operating cash flow", kind: level,
+       series: hs_capex_ocf, calm: "0.40", yellow: "0.80", red: "1.00"}
+    - {id: fcf_negative, link: C, label: "Top-5 names with negative FCF", kind: level,
+       series: hs_fcf_neg, calm: "0", yellow: "1", red: "3"}
+    - {id: capex_decel, link: C, label: "Capex growth off its peak (YoY pts)", kind: fall_pts,
+       series: hs_capex_yoy, window: 6, yellow: "0.20", red: "0.40"}
+    # --- D Financing plumbing (market proxies; ABS/CDS levels are human-scored)
     - {id: hyg_drawdown, link: D, label: "HY bond ETF drawdown", kind: drawdown,
        series: HYG, window: 126, yellow: "0.03", red: "0.06"}
     - {id: bdc_vs_spy, link: D, label: "BDCs vs S&P (1 mo)", kind: rel_return,
@@ -322,13 +356,36 @@ bubble_monitor:
        series: NVDA, window: 252, yellow: "0.20", red: "0.35"}
     - {id: smh_trend, link: F, label: "Semis trend (200-day)", kind: below_ma,
        series: SMH, window: 200, red_drawdown: "0.25"}
+    - {id: nvda_dso, link: F, label: "NVDA days receivable, vs 1y low", kind: widening,
+       series: nvda_dso, lookback: 5, yellow: "10", red: "20"}   # range 45-54 is seasonal
+    - {id: nvda_growth, link: F, label: "NVDA revenue growth off peak (YoY pts)", kind: fall_pts,
+       series: nvda_rev_yoy, window: 6, yellow: "0.20", red: "0.40"}
+    - {id: azure_spot, link: F, label: "Azure H100 spot off its high", kind: drawdown,
+       series: azure_h100_spot, window: 1000, yellow: "0.10", red: "0.25"}
+    - {id: azure_reserved, link: F, label: "Azure H100 1y reserved off its high", kind: drawdown,
+       series: azure_h100_res1y, window: 1000, yellow: "0.05", red: "0.15"}
+    # --- G Monetization
+    # Level, not off-peak: Oracle's 2025 jump lapping makes any peak comparison a false alarm.
+    - {id: rpo_growth, link: G, label: "MSFT+GOOGL+ORCL backlog growth YoY", kind: below,
+       series: rpo_yoy, calm: "-1.00", yellow: "-0.40", red: "-0.20"}
+    - {id: capex_intensity, link: G, label: "Top-5 capex / revenue", kind: level, max_status: YELLOW,
+       series: hs_capex_rev, calm: "0.10", yellow: "0.25", red: "0.35"}
+    - {id: ai_adoption, link: G, label: "Business AI use off its 6-mo high (pts)", kind: fall_pts,
+       series: btos_ai_use, window: 13, yellow: "3", red: "6"}
+    # --- H Accounting quality (depreciation lag; the rest is human-scored)
+    - {id: capex_vs_dep, link: H, label: "Capex / depreciation (deferred drag)", kind: level, max_status: YELLOW,
+       series: hs_capex_dep, calm: "1.5", yellow: "3.0", red: "4.5"}
     # --- I Market structure
     - {id: spx_trend, link: I, label: "S&P 500 trend (200-day)", kind: below_ma,
-       series: "$SPX", window: 200, red_drawdown: "0.20"}
+       series: SPY, window: 200, red_drawdown: "0.20"}
     - {id: spx_drawdown, link: I, label: "S&P 500 off 1y high", kind: drawdown,
-       series: "$SPX", window: 252, yellow: "0.10", red: "0.20"}
-    - {id: leaders_breaking, link: I, label: "Cap-weight lagging equal-weight (1 mo)", kind: rel_return,
+       series: SPY, window: 252, yellow: "0.10", red: "0.20"}
+    - {id: leaders_breaking, link: I, label: "Equal-weight vs cap-weight (1 mo)", kind: rel_return,
        series: SPY, vs: RSP, lookback: 20, yellow: "0.03", red: "0.06"}
+    - {id: margin_rollover, link: I, label: "Margin debt off 6-mo high", kind: drawdown,
+       series: finra_margin, window: 6, yellow: "0.05", red: "0.12"}
+    - {id: margin_excess, link: I, label: "Margin debt YoY growth", kind: level, max_status: YELLOW,
+       series: finra_margin_yoy, calm: "0.10", yellow: "0.30", red: "0.45"}
 
 reporting:
   deepdive_html:                            # 2026-08-07: HTML companion for weekly deep dives

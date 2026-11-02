@@ -13,11 +13,14 @@ Vocabulary (docs/themes/monitor-ai-bubble-exit.md §3):
 - link: one of the nine chain links A..I; status = worst of its automated
   signals and the human's (non-stale) score
 - stage 0..3: count of RED links, hard reds, market confirmation
+- score 0-100: weighted severity across scored links; a gauge and trend. The
+  stage rule alone sets the action.
 """
 
+from bisect import bisect_right
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from decimal import Decimal
 
 from analytics.momentum import QUARANTINE_KEY
@@ -26,8 +29,10 @@ __all__ = [
     "QUARANTINE_KEY", "GREEN", "YELLOW", "RED", "NO_DATA", "LINKS",
     "SignalResult", "LinkStatus", "StageResult",
     "widening", "pct_change", "drawdown_from_high", "trailing_return",
-    "below_moving_average", "grade", "evaluate_signal", "link_statuses",
-    "stage",
+    "below_moving_average", "grade", "severity", "evaluate_signal",
+    "link_statuses", "stage", "link_score", "composite", "ScoreResult",
+    "next_escalation", "discrete_quarters", "derive_fundamentals",
+    "ReplayPoint", "evaluate_at", "replay", "held_stages",
 ]
 
 GREEN, YELLOW, RED, NO_DATA = "GREEN", "YELLOW", "RED", "NO_DATA"
@@ -109,6 +114,20 @@ def grade(measure: Decimal | None, yellow: Decimal | None,
     return GREEN
 
 
+def severity(measure: Decimal | None, calm: Decimal, yellow: Decimal,
+             red: Decimal) -> Decimal | None:
+    """Piecewise-linear 0-100: calm→0, yellow→50, red→85, then on to 100."""
+    if measure is None:
+        return None
+    if measure <= calm:
+        return Decimal(0)
+    if measure < yellow:
+        return 50 * (measure - calm) / (yellow - calm)
+    if measure < red:
+        return 50 + 35 * (measure - yellow) / (red - yellow)
+    return min(Decimal(100), 85 + 15 * (measure - red) / (red - yellow))
+
+
 # --------------------------------------------------------------------------- #
 # Config-driven signal evaluation
 # --------------------------------------------------------------------------- #
@@ -122,6 +141,7 @@ class SignalResult:
     measure: Decimal | None       # the graded quantity (bigger = worse)
     detail: str                   # human-readable reading
     as_of: date | None = None
+    severity: Decimal | None = None   # 0-100
 
 
 def _d(value) -> Decimal | None:
@@ -136,7 +156,34 @@ def _fmt(x: Decimal | None, places: str = "0.01") -> str:
     return "n/a" if x is None else str(x.quantize(Decimal(places)))
 
 
+_DISCRETE_SEVERITY = {GREEN: Decimal(10), YELLOW: Decimal(50), RED: Decimal(85)}
+
+
 def evaluate_signal(
+    spec: Mapping,
+    series: Mapping[str, Sequence[Decimal]],
+    as_of: Mapping[str, date | None] | None = None,
+) -> SignalResult:
+    """Grade one config signal and attach its 0-100 severity. Kinds with
+    thresholds scale continuously; below_ma/divergence are discrete."""
+    res = _grade_signal(spec, series, as_of)
+    y, r = _d(spec.get("yellow")), _d(spec.get("red"))
+    cap = spec.get("max_status")            # build-up gauges: raise the score, never break
+    if cap and _SEVERITY[res.status] > _SEVERITY[cap]:
+        res = replace(res, status=cap)
+    if res.status == NO_DATA:
+        sev = None
+    elif y is not None and r is not None:
+        calm = _d(spec.get("calm"))
+        if calm is None:
+            calm = min(Decimal(0), 2 * y - r)
+        sev = severity(res.measure, calm, y, r)
+    else:
+        sev = _DISCRETE_SEVERITY[res.status]
+    return replace(res, severity=sev)
+
+
+def _grade_signal(
     spec: Mapping,
     series: Mapping[str, Sequence[Decimal]],
     as_of: Mapping[str, date | None] | None = None,
@@ -146,7 +193,9 @@ def evaluate_signal(
     kinds:
       widening      series, lookback, yellow, red       (latest − trailing min)
       level         series, yellow, red                 (latest level)
+      below         series, yellow, red                 (latest level, low = bad; thresholds negated)
       fall_pct      series, lookback, yellow, red       (decline over lookback, as +fraction)
+      fall_pts      series, window, yellow, red         (trailing max − latest, same units)
       rel_return    series, vs, lookback, yellow, red   (underperformance vs `vs`, as +fraction)
       drawdown      series, window, yellow, red         (fraction below trailing high)
       basket_drawdown  members, window, yellow, red     (mean drawdown across members present)
@@ -175,12 +224,23 @@ def evaluate_signal(
         s = get(spec["series"])
         m = s[-1] if s else None
         return result(grade(m, y, r), m, f"{_fmt(m)}", spec["series"])
+    if kind == "below":
+        s = get(spec["series"])
+        m = -s[-1] if s else None
+        return result(grade(m, y, r), m, _fmt_pct(s[-1] if s else None), spec["series"])
     if kind == "fall_pct":
         s = get(spec["series"])
         ch = pct_change(s, int(spec["lookback"]))
         m = None if ch is None else -ch
         return result(grade(m, y, r), m,
                       f"{_fmt_pct(ch)} over {spec['lookback']} obs", spec["series"])
+    if kind == "fall_pts":
+        s = get(spec["series"])
+        window = s[-int(spec["window"]):]
+        m = max(window) - s[-1] if s else None
+        return result(grade(m, y, r), m,
+                      f"{_fmt(s[-1] if s else None)} ({_fmt(m)} off {spec['window']}-obs high)",
+                      spec["series"])
     if kind == "rel_return":
         a, b = get(spec["series"]), get(spec["vs"])
         lb = int(spec["lookback"])
@@ -330,3 +390,263 @@ def stage(
         lvl = 0
         reasons.append(f"{len(red)} red link(s), no hard red")
     return StageResult(lvl, red, tuple(hard_reds), confirm, tuple(reasons))
+
+
+def held_stages(raw: Sequence[int], *, confirm_up: int, confirm_down: int,
+                floors: Sequence[int] | None = None) -> list[int]:
+    """Debounce the rule: a new stage takes effect only after the raw stage
+    has stayed at or above it for `confirm_up` sessions, and steps down only
+    after `confirm_down` sessions below. floors[i] (active hard reds) applies
+    immediately; a hard red never waits."""
+    out, cur = [], 0
+    for i in range(len(raw)):
+        up = min(raw[max(0, i - confirm_up + 1):i + 1]) if i + 1 >= confirm_up else 0
+        down = (max(raw[i - confirm_down + 1:i + 1]) if i + 1 >= confirm_down else cur)
+        if up > cur:
+            cur = up
+        elif down < cur:
+            cur = down
+        cur = max(cur, floors[i] if floors else 0)
+        out.append(cur)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Score (gauge; the stage rule above sets the action)
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class ScoreResult:
+    score: Decimal | None
+    band: str | None
+    coverage: Decimal                 # share of link weight that was scored
+    links: dict[str, Decimal]         # scored links only
+
+
+def link_score(link: LinkStatus, cfg: Mapping) -> Decimal | None:
+    """auto = max_weight*worst + (1-max_weight)*mean of signal severities;
+    the link scores the higher of auto and a fresh human score."""
+    sevs = [s.severity for s in link.signals if s.severity is not None]
+    auto = None
+    if sevs:
+        w = Decimal(cfg["max_weight"])
+        auto = w * max(sevs) + (1 - w) * (sum(sevs) / len(sevs))
+    human = Decimal(cfg["human_severity"][link.human]) if link.human else None
+    present = [x for x in (auto, human) if x is not None]
+    return max(present) if present else None
+
+
+def composite(links: Sequence[LinkStatus], hard_red_count: int, cfg: Mapping) -> ScoreResult:
+    weights = {k: Decimal(v) for k, v in cfg["weights"].items()}
+    scored = {l.link: x for l in links if (x := link_score(l, cfg)) is not None}
+    used = sum(weights[k] for k in scored)
+    total = sum(weights.values())
+    if not used:
+        return ScoreResult(None, None, Decimal(0), {})
+    score = sum(weights[k] * v for k, v in scored.items()) / used
+    if hard_red_count:
+        floor = Decimal(cfg["hard_red_floor"]) + Decimal(cfg["hard_red_step"]) * (hard_red_count - 1)
+        score = max(score, min(floor, Decimal(100)))
+    band = next((name for name, upper in cfg["bands"] if score <= Decimal(upper)),
+                cfg["bands"][-1][0])
+    return ScoreResult(score, band, used / total, scored)
+
+
+def next_escalation(result: StageResult, links: Sequence[LinkStatus], cfg: Mapping) -> str:
+    """Plain statement of what moves the raw rule up, naming the closest links."""
+    scores = {l.link: link_score(l, cfg) for l in links}
+    closest = sorted(((v, k) for k, v in scores.items()
+                      if v is not None and k not in result.red_links), reverse=True)[:2]
+    near = ", ".join(f"{k} ({v:.0f})" for v, k in closest) or "none scored"
+    if result.stage == 0:
+        need = "1 more red link" if len(result.red_links) == 1 else "2 red links"
+        return f"Stage 1 needs {need} or any hard red. Closest to red: {near}."
+    if result.stage == 1:
+        return f"Stage 2 needs 3 red links, or a credit link (A/D) and C both red. Closest: {near}."
+    if result.stage == 2:
+        return "Stage 3 needs the market to confirm: S&P below its 200-day and HY spreads widening."
+    return "At the final stage. Re-entry needs reds to clear for 2 consecutive reviews."
+
+
+# --------------------------------------------------------------------------- #
+# Fundamentals from XBRL facts (pure)
+# --------------------------------------------------------------------------- #
+
+Dated = list[tuple[date, Decimal]]
+
+
+def _day(text: str) -> date:
+    return datetime.strptime(text, "%Y-%m-%d").date()
+
+
+def discrete_quarters(facts: Sequence[Mapping]) -> dict[date, tuple[Decimal, date]]:
+    """{quarter end: (value, first filed)} from duration facts. A ~91-day fact
+    is taken directly; otherwise a YTD/annual fact is differenced against the
+    prior fact with the same start. Quarters with no such pair are absent."""
+    spans: dict[tuple[date, date], tuple[Decimal, str, date]] = {}
+    for f in facts:
+        if not f.get("start"):
+            continue
+        key = (_day(f["start"]), _day(f["end"]))
+        filed = _day(f["filed"])
+        prior = spans.get(key)
+        first = min(filed, prior[2]) if prior else filed
+        if prior is None or f["filed"] >= prior[1]:      # newest value wins (restated)
+            spans[key] = (Decimal(str(f["val"])), f["filed"], first)
+        else:
+            spans[key] = (prior[0], prior[1], first)
+    out: dict[date, tuple[Decimal, date]] = {}
+    by_start: dict[date, list[date]] = {}
+    for start, end in spans:
+        by_start.setdefault(start, []).append(end)
+    for (start, end), (val, _, filed) in spans.items():
+        days = (end - start).days
+        if 80 <= days <= 100:
+            out[end] = (val, filed)
+    for (start, end), (val, _, filed) in spans.items():
+        if (end - start).days <= 100 or end in out:
+            continue
+        earlier = [e for e in by_start[start] if e < end]
+        if not earlier:
+            continue
+        prev = max(earlier)
+        if 80 <= (end - prev).days <= 100:
+            out[end] = (val - spans[(start, prev)][0], filed)
+    return out
+
+
+def _bucket(end: date) -> date:
+    """Calendar quarter containing `end` (Oracle's Aug-31 → Sep bucket)."""
+    q = (end.month + 2) // 3
+    return date(end.year, q * 3, 1)
+
+
+def _by_bucket(quarters: Mapping[date, tuple[Decimal, date]]) -> dict[date, tuple[Decimal, date]]:
+    return {_bucket(end): v for end, v in quarters.items()}
+
+
+def _prev_bucket(b: date, n: int) -> date:
+    idx = b.year * 4 + b.month // 3 - 1 - n
+    return date(idx // 4, (idx % 4 + 1) * 3, 1)
+
+
+def _ttm(q: Mapping[date, tuple[Decimal, date]], b: date) -> Decimal | None:
+    window = [q.get(_prev_bucket(b, i)) for i in range(4)]
+    return None if None in window else sum(v[0] for v in window)
+
+
+def derive_fundamentals(
+    facts: Mapping[str, Mapping[str, Sequence[Mapping]]],
+    hyperscalers: Sequence[str], rpo_names: Sequence[str],
+) -> dict[str, Dated]:
+    """Derived series dated by FILED date, so replay stays point-in-time.
+    A bucket counts only once every hyperscaler has reported it."""
+    quarters = {sym: {m: _by_bucket(discrete_quarters(f)) for m, f in metrics.items()
+                      if m in ("capex", "ocf", "revenue", "dep")}
+                for sym, metrics in facts.items()}
+    out: dict[str, Dated] = {k: [] for k in
+                             ("hs_capex_ocf", "hs_capex_rev", "hs_capex_yoy", "hs_fcf_neg",
+                              "hs_capex_dep", "rpo_yoy", "nvda_dso", "nvda_rev_yoy")}
+    hs = [quarters.get(sym, {}) for sym in hyperscalers]
+    capex_buckets = [set(q.get("capex", {})) for q in hs]
+    for b in sorted(set.intersection(*capex_buckets) if capex_buckets else ()):
+        filed = max(q["capex"][b][1] for q in hs)
+        capex = [_ttm(q["capex"], b) for q in hs]
+        ocf = [_ttm(q.get("ocf", {}), b) for q in hs]
+        rev = [_ttm(q.get("revenue", {}), b) for q in hs]
+        dep = [_ttm(q.get("dep", {}), b) for q in hs]
+        if None not in capex and None not in ocf:
+            out["hs_capex_ocf"].append((filed, sum(capex) / sum(ocf)))
+            out["hs_fcf_neg"].append((filed, Decimal(sum(c > o for c, o in zip(capex, ocf)))))
+        if None not in capex and None not in rev:
+            out["hs_capex_rev"].append((filed, sum(capex) / sum(rev)))
+        if None not in capex and None not in dep:
+            out["hs_capex_dep"].append((filed, sum(capex) / sum(dep)))
+        prior = [q["capex"].get(_prev_bucket(b, 4)) for q in hs]
+        if None not in prior:
+            now = sum(q["capex"][b][0] for q in hs)
+            out["hs_capex_yoy"].append((filed, now / sum(p[0] for p in prior) - 1))
+
+    def instants(sym: str, metric: str) -> dict[date, tuple[Decimal, date]]:
+        points: dict[date, tuple[Decimal, str]] = {}
+        for f in facts.get(sym, {}).get(metric, []):
+            b = _bucket(_day(f["end"]))
+            if f.get("start"):
+                continue
+            if b not in points or f["filed"] < points[b][1]:
+                points[b] = (Decimal(str(f["val"])), f["filed"])
+        return {b: (v, _day(fd)) for b, (v, fd) in points.items()}
+
+    rpo = [instants(sym, "rpo") for sym in rpo_names]
+    for b in sorted(set.intersection(*[set(r) for r in rpo]) if rpo else ()):
+        prior_b = _prev_bucket(b, 4)
+        if all(prior_b in r for r in rpo):
+            now = sum(r[b][0] for r in rpo)
+            then = sum(r[prior_b][0] for r in rpo)
+            out["rpo_yoy"].append((max(r[b][1] for r in rpo), now / then - 1))
+
+    nvda_rev = quarters.get("NVDA", {}).get("revenue", {})
+    ar = instants("NVDA", "ar")
+    for b, (rev_q, filed) in sorted(nvda_rev.items()):
+        if b in ar and rev_q:
+            out["nvda_dso"].append((filed, ar[b][0] / rev_q * 91))
+        prior = nvda_rev.get(_prev_bucket(b, 4))
+        if prior and prior[0]:
+            out["nvda_rev_yoy"].append((filed, rev_q / prior[0] - 1))
+    return {k: sorted(v) for k, v in out.items()}
+
+
+# --------------------------------------------------------------------------- #
+# Point-in-time replay (trends from cached series + dated human rows)
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class ReplayPoint:
+    day: date
+    score: Decimal | None
+    stage: int                            # raw rule output that day
+    hard_reds: int
+    links: dict[str, Decimal]
+    signals: dict[str, Decimal | None]    # signal id → graded measure
+    severities: dict[str, Decimal | None]
+
+
+def evaluate_at(day: date, dated: Mapping[str, Dated],
+                specs: Sequence[Mapping]) -> list[SignalResult]:
+    series, as_of = {}, {}
+    for name, points in dated.items():
+        cut = bisect_right(points, day, key=lambda p: p[0])
+        series[name] = [p[1] for p in points[:cut]]
+        as_of[name] = points[cut - 1][0] if cut else None
+    return [evaluate_signal(spec, series, as_of) for spec in specs]
+
+
+def replay(
+    days: Sequence[date], dated: Mapping[str, Dated], specs: Sequence[Mapping],
+    human_rows: Sequence[HumanScore | tuple], hard_rows: Sequence[tuple],
+    *, score_cfg: Mapping, human_max_age_days: int, confirm_signal_ids: Sequence[str],
+) -> list[ReplayPoint]:
+    """Recompute signals, links, stage and score as of each day. human_rows
+    are ascending HumanScore rows (status CLEARED withdraws); hard_rows are
+    (key, raised_on, cleared_on|None). FRED points use the latest vintage."""
+    out = []
+    for day in days:
+        signals = evaluate_at(day, dated, specs)
+        human: dict[str, HumanScore] = {}
+        for row in human_rows:
+            if row.recorded_on > day:
+                continue
+            if row.status == "CLEARED":
+                human.pop(row.link, None)
+            else:
+                human[row.link] = row
+        hard = [k for k, raised, cleared in hard_rows
+                if raised <= day and (cleared is None or cleared > day)]
+        links = link_statuses(signals, human, today=day,
+                              human_max_age_days=human_max_age_days)
+        res = stage(links, hard, signals, confirm_signal_ids=confirm_signal_ids)
+        sc = composite(links, len(hard), score_cfg)
+        out.append(ReplayPoint(day, sc.score, res.stage, len(hard), sc.links,
+                               {s.id: s.measure for s in signals},
+                               {s.id: s.severity for s in signals}))
+    return out

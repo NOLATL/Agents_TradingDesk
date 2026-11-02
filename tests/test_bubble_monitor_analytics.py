@@ -203,3 +203,172 @@ def test_stage_three_needs_market_confirmation():
     assert stage(links, [], sigs_noconf, confirm_signal_ids=["spx_ma", "sA"]).stage == 2
     # empty confirm list can never confirm
     assert stage(links, [], sigs, confirm_signal_ids=[]).stage == 2
+
+
+# ---------------------------------------------------------------- severity + score
+
+def test_severity_anchors():
+    from analytics.bubble_monitor import severity
+    assert severity(D(0), D(0), D("0.5"), D(1)) == 0
+    assert severity(D("0.25"), D(0), D("0.5"), D(1)) == 25
+    assert severity(D("0.5"), D(0), D("0.5"), D(1)) == 50
+    assert severity(D(1), D(0), D("0.5"), D(1)) == 85
+    assert severity(D(9), D(0), D("0.5"), D(1)) == 100
+    assert severity(None, D(0), D("0.5"), D(1)) is None
+
+
+SCORE_CFG = {"weights": {c: "1" for c in "ABCDEFGHI"}, "max_weight": "0.5",
+             "human_severity": {"GREEN": "15", "YELLOW": "50", "RED": "85"},
+             "hard_red_floor": "50", "hard_red_step": "5",
+             "bands": [["LOW", "30"], ["ELEVATED", "50"], ["HIGH", "70"], ["SEVERE", "100"]]}
+
+
+def _sev(sid, link, sev):
+    from analytics.bubble_monitor import SignalResult
+    return SignalResult(sid, link, sid, RED, None, "", None, D(sev))
+
+
+def test_composite_renormalizes_and_reports_coverage():
+    from analytics.bubble_monitor import composite
+    links = link_statuses([_sev("a", "A", 80), _sev("b", "A", 40), _sev("c", "B", 20)],
+                          {}, today=TODAY, human_max_age_days=35)
+    res = composite(links, 0, SCORE_CFG)
+    # A = .5*80 + .5*60 = 70; B = 20; unscored links drop out
+    assert res.score == 45 and res.band == "ELEVATED"
+    assert res.coverage == D(2) / 9 and set(res.links) == {"A", "B"}
+
+
+def test_human_score_counts_and_hard_red_floors():
+    from analytics.bubble_monitor import composite
+    human = {"G": HumanScore("G", RED, "n", TODAY)}
+    links = link_statuses([], human, today=TODAY, human_max_age_days=35)
+    assert composite(links, 0, SCORE_CFG).score == 85
+    low = link_statuses([_sev("a", "A", 5)], {}, today=TODAY, human_max_age_days=35)
+    assert composite(low, 0, SCORE_CFG).score == 5
+    assert composite(low, 1, SCORE_CFG).score == 50
+    assert composite(low, 3, SCORE_CFG).score == 60
+
+
+def test_composite_empty():
+    from analytics.bubble_monitor import composite
+    links = link_statuses([], {}, today=TODAY, human_max_age_days=35)
+    assert composite(links, 0, SCORE_CFG).score is None
+
+
+# ---------------------------------------------------------------- fundamentals
+
+def fact(start, end, val, filed="2026-01-01"):
+    return {"start": start, "end": end, "val": val, "filed": filed}
+
+
+def test_discrete_quarters_direct_and_ytd_difference():
+    from analytics.bubble_monitor import discrete_quarters
+    q = discrete_quarters([
+        fact("2026-01-01", "2026-03-31", 10, "2026-04-20"),
+        fact("2026-01-01", "2026-06-30", 25, "2026-07-20"),
+        fact("2026-01-01", "2026-09-30", 45, "2026-10-20"),
+        fact("2026-01-01", "2026-12-31", 70, "2027-02-01"),
+    ])
+    assert [q[date(2026, m, d)][0] for m, d in [(3, 31), (6, 30), (9, 30), (12, 31)]] == [10, 15, 20, 25]
+    assert q[date(2026, 9, 30)][1] == date(2026, 10, 20)     # dated by filing
+
+
+def test_discrete_quarters_ignores_unpairable_ttm():
+    from analytics.bubble_monitor import discrete_quarters
+    assert discrete_quarters([fact("2025-10-01", "2026-09-30", 100)]) == {}
+
+
+def test_restated_value_wins_but_keeps_first_filed_date():
+    from analytics.bubble_monitor import discrete_quarters
+    q = discrete_quarters([fact("2026-01-01", "2026-03-31", 10, "2026-04-20"),
+                           fact("2026-01-01", "2026-03-31", 12, "2027-04-20")])
+    assert q[date(2026, 3, 31)] == (12, date(2026, 4, 20))
+
+
+def test_oracle_fiscal_quarters_align_to_calendar_bucket():
+    from analytics.bubble_monitor import _bucket, _prev_bucket
+    assert _bucket(date(2026, 8, 31)) == date(2026, 9, 1)
+    assert _bucket(date(2026, 9, 30)) == date(2026, 9, 1)
+    assert _bucket(date(2026, 1, 25)) == date(2026, 3, 1)
+    assert _prev_bucket(date(2026, 3, 1), 1) == date(2025, 12, 1)
+    assert _prev_bucket(date(2026, 3, 1), 4) == date(2025, 3, 1)
+
+
+def _quarters(year_from, n, val):
+    out, y, m = [], year_from, 1
+    for i in range(n):
+        end_m = m + 2
+        end = date(y, end_m, 30 if end_m in (6, 9) else 31)
+        out.append(fact(f"{y}-{m:02d}-01", end.isoformat(), val(i), f"{end.year + (end_m == 12)}-{(end_m % 12) + 1:02d}-20"))
+        m += 3
+        if m > 12:
+            y, m = y + 1, 1
+    return out
+
+
+def test_derive_fundamentals_ratios():
+    from analytics.bubble_monitor import derive_fundamentals
+    facts = {"AA": {"capex": _quarters(2024, 8, lambda i: 10 + i), "ocf": _quarters(2024, 8, lambda i: 20),
+                    "revenue": _quarters(2024, 8, lambda i: 100), "dep": _quarters(2024, 8, lambda i: 5)},
+             "BB": {"capex": _quarters(2024, 8, lambda i: 30), "ocf": _quarters(2024, 8, lambda i: 20),
+                    "revenue": _quarters(2024, 8, lambda i: 100), "dep": _quarters(2024, 8, lambda i: 5)}}
+    out = derive_fundamentals(facts, ["AA", "BB"], [])
+    # final TTM: AA capex 14+15+16+17=62, BB 120; ocf 80+80
+    assert out["hs_capex_ocf"][-1][1] == D(182) / 160
+    assert out["hs_fcf_neg"][-1][1] == 1                      # BB only
+    assert out["hs_capex_dep"][-1][1] == D(182) / 40
+    assert out["hs_capex_rev"][-1][1] == D(182) / 800
+    assert out["hs_capex_yoy"][-1][1] == D(47) / 43 - 1       # (17+30)/(13+30)
+
+
+# ---------------------------------------------------------------- replay
+
+def test_replay_is_point_in_time_and_honours_human_dates():
+    from analytics.bubble_monitor import replay
+    d1, d2 = date(2026, 1, 5), date(2026, 1, 6)
+    specs = [{"id": "w", "link": "A", "kind": "widening", "series": "S", "lookback": 5,
+              "yellow": "0.5", "red": "1.0"}]
+    dated = {"S": [(d1, D(1)), (d2, D(3))]}
+    human = [HumanScore("B", RED, "n", d2)]
+    pts = replay([d1, d2], dated, specs, human, [("capex_cut", d2, None)], score_cfg=SCORE_CFG,
+                 human_max_age_days=35, confirm_signal_ids=[])
+    assert pts[0].signals["w"] is None and pts[0].stage == 0   # d2's value is unseen on d1
+    assert "B" not in pts[0].links
+    assert pts[1].signals["w"] == 2 and pts[1].links["B"] == 85
+    assert pts[1].stage == 1                                    # hard red + 2 reds both land at 1
+
+
+# ---------------------------------------------------------------- stability
+
+def test_held_stage_ignores_blips_and_needs_confirmation():
+    from analytics.bubble_monitor import held_stages
+    h = lambda raw, **k: held_stages(raw, confirm_up=3, confirm_down=4, **k)  # noqa: E731
+    assert h([0, 2, 0, 2, 0, 0]) == [0] * 6                  # one-day flips never act
+    assert h([2, 2, 2, 2]) == [0, 0, 2, 2]
+    assert h([1, 1, 1, 2, 2, 2]) == [0, 0, 1, 1, 1, 2]
+
+
+def test_held_stage_steps_down_slowly():
+    from analytics.bubble_monitor import held_stages
+    raw = [2, 2, 2, 0, 0, 0, 0]
+    assert held_stages(raw, confirm_up=3, confirm_down=4) == [0, 0, 2, 2, 2, 2, 0]
+
+
+def test_hard_red_floor_is_immediate():
+    from analytics.bubble_monitor import held_stages
+    assert held_stages([1, 1], confirm_up=5, confirm_down=10, floors=[0, 1]) == [0, 1]
+
+
+def test_max_status_caps_status_not_severity():
+    spec = {"id": "x", "link": "G", "kind": "level", "series": "S", "max_status": YELLOW,
+            "calm": "0", "yellow": "0.25", "red": "0.35"}
+    res = evaluate_signal(spec, {"S": seq(0.40)})
+    assert res.status == YELLOW and res.severity > 85
+
+
+def test_below_kind_low_is_bad():
+    spec = {"id": "r", "link": "G", "kind": "below", "series": "S",
+            "calm": "-1", "yellow": "-0.4", "red": "-0.2"}
+    assert evaluate_signal(spec, {"S": seq(0.89)}).status == GREEN
+    assert evaluate_signal(spec, {"S": seq(0.30)}).status == YELLOW
+    assert evaluate_signal(spec, {"S": seq(0.10)}).status == RED
