@@ -1013,6 +1013,14 @@ webhook push of merge variables to its own Private Plugin, markup in
 Plain-div bars, no JS or CDN chart. A failed push is a gap note, never a failed
 run. The health plugin is untouched; the board needs its own plugin.
 
+## 2026-11-03 — Link B off the board until automated (human-directed)
+
+The board and score carry only links with automated feeds. B (Capital into
+AI) had no feed and waited on a human rating, so it is dropped from
+`bubble_monitor.score.weights`; the active chain is whatever that map lists.
+Its human scores stay in the DB but are not read and `score B` is refused.
+Re-add B with a weight once it has an automated signal.
+
 ## Deferred ideas (noted, not built)
 
 - **Analyst-authored narrative report sections** (industry backdrop, per-name

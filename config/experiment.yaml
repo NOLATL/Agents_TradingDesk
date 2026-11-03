@@ -300,7 +300,9 @@ bubble_monitor:
       ar: [AccountsReceivableNetCurrent]
   vast_models: ["H100 SXM", "H200", "B200"]   # display only: license bars scoring
   score:
-    weights: {A: "0.15", B: "0.10", C: "0.15", D: "0.20", E: "0.05",
+    # the active chain: a link absent here is off the board and the score.
+    # B (Capital into AI) is off until it has an automated feed (2026-11-03).
+    weights: {A: "0.15", C: "0.15", D: "0.20", E: "0.05",
               F: "0.10", G: "0.10", H: "0.05", I: "0.10"}
     human_severity: {GREEN: "15", YELLOW: "50", RED: "85"}
     max_weight: "0.6"             # link auto score = 0.6*worst + 0.4*mean of its signals

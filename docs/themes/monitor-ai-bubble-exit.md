@@ -199,7 +199,8 @@ all-out on one signal is the usual mistake in both directions. Being early
 costs real returns: the packet's base case is a **2-3 year slow deflation,
 not a 2000-style pop** (forecast #8, 55%).
 
-**Scoring.** Each of the nine links [A]–[I] gets Green / Yellow / Red at
+**Scoring.** Each of the nine links [A]–[I] (the automated board drops [B]
+until it has a feed, 2026-11-03) gets Green / Yellow / Red at
 each monthly review. Reds count only when they're in *different* links. Two
 reds inside [D] are one signal, not two.
 

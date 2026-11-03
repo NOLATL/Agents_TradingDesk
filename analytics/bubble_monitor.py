@@ -18,7 +18,7 @@ Vocabulary (docs/themes/monitor-ai-bubble-exit.md §3):
 """
 
 from bisect import bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -321,10 +321,14 @@ class LinkStatus:
 def link_statuses(
     signals: Sequence[SignalResult],
     human: Mapping[str, HumanScore],
-    *, today: date, human_max_age_days: int,
+    *, today: date, human_max_age_days: int, active: Iterable[str] | None = None,
 ) -> list[LinkStatus]:
+    """active limits the chain to those link codes (default: all nine)."""
+    keep = set(LINKS) if active is None else set(active)
     out = []
     for code, name in LINKS.items():
+        if code not in keep:
+            continue
         sigs = tuple(s for s in signals if s.link == code)
         auto = _worst([s.status for s in sigs])
         h = human.get(code)
@@ -643,7 +647,8 @@ def replay(
         hard = [k for k, raised, cleared in hard_rows
                 if raised <= day and (cleared is None or cleared > day)]
         links = link_statuses(signals, human, today=day,
-                              human_max_age_days=human_max_age_days)
+                              human_max_age_days=human_max_age_days,
+                              active=score_cfg["weights"])
         res = stage(links, hard, signals, confirm_signal_ids=confirm_signal_ids)
         sc = composite(links, len(hard), score_cfg)
         out.append(ReplayPoint(day, sc.score, res.stage, len(hard), sc.links,

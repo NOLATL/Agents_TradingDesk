@@ -65,7 +65,7 @@ from reporting.bubble_monitor import (
 from schemas.models import Document
 
 CFG = CONFIG.get("bubble_monitor", {})
-LINK_CODES = set("ABCDEFGHI")
+LINK_CODES = set(CFG.get("score", {}).get("weights", "ABCDEFGHI"))   # links off the board are not rateable
 HUMAN_STATUSES = {"GREEN", "YELLOW", "RED", "CLEARED"}
 Dated = list[tuple[date, Decimal]]
 VARS_PATH = Path(__file__).resolve().parent.parent / "reporting/output/bubble-monitor/trmnl-vars.json"
@@ -258,7 +258,7 @@ def compute(conn, session: date, gaps: list[str] | None = None) -> BubbleReport:
     rows, hard_rows, hard_reds = load_human(conn)
     max_age = int(CFG.get("human_max_age_days", 35))
     links = link_statuses(signals, current_human(rows), today=session,
-                          human_max_age_days=max_age)
+                          human_max_age_days=max_age, active=CFG["score"]["weights"])
     confirm = CFG.get("confirm_signal_ids", [])
     result = stage(links, [h.key for h in hard_reds], signals, confirm_signal_ids=confirm)
     score = composite(links, len(hard_reds), CFG["score"])

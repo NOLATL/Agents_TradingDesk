@@ -372,3 +372,11 @@ def test_below_kind_low_is_bad():
     assert evaluate_signal(spec, {"S": seq(0.89)}).status == GREEN
     assert evaluate_signal(spec, {"S": seq(0.30)}).status == YELLOW
     assert evaluate_signal(spec, {"S": seq(0.10)}).status == RED
+
+
+def test_inactive_link_is_off_the_chain_even_with_signals_or_a_human_score():
+    from analytics.bubble_monitor import HumanScore
+    human = {"B": HumanScore("B", RED, "n", TODAY)}
+    links = link_statuses([_sev("a", "A", 80), _sev("c", "B", 20)], human,
+                          today=TODAY, human_max_age_days=35, active={"A": "1", "C": "1"})
+    assert [l.link for l in links] == ["A", "C"]
